@@ -10,8 +10,8 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 CWA_API_KEY = os.environ.get('CWA_API_KEY')
 DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL')
 
-TARGET_COUNTY = '彰化縣'
-TARGET_TOWN = '鹿港鎮'
+# 🎯 設定你要監控的多個鄉鎮清單
+TARGET_TOWNS = ['鹿港鎮', '福興鄉', '和美鎮']
 
 
 def send_discord_message(message):
@@ -32,50 +32,50 @@ def main():
       data = response.json()
       stations = data['records']['Station']
 
-      target_lat = 24.086939
-      target_lon = 120.480576
+      current_time = datetime.now().strftime('%H:%M:%S')
+      raining_stations = []
 
-      closest_station = None
-      min_distance = float('inf')
-
+      # 檢查所有測站
       for st in stations:
-        county = st['GeoInfo']['CountyName']
-        if county == TARGET_COUNTY:
-          lat = float(st['GeoInfo']['Coordinates'][1]['StationLatitude'])
-          lon = float(st['GeoInfo']['Coordinates'][0]['StationLongitude'])
-          dist = math.sqrt((lat - target_lat) ** 2 + (lon - target_lon) ** 2)
-          if dist < min_distance:
-            min_distance = dist
-            closest_station = st
+        town = st['GeoInfo'].get('TownName', '')
 
-      if closest_station:
-        st_name = closest_station['StationName']
-        raw_rain = closest_station['WeatherElement']['Now']['Precipitation']
-        current_time = datetime.now().strftime('%H:%M:%S')
+        # 如果該測站的鄉鎮名稱在我們的目標清單內
+        if town in TARGET_TOWNS:
+          st_name = st['StationName']
+          raw_rain = st['WeatherElement']['Now']['Precipitation']
 
-        print(
-            f'[{current_time}] 目前測站: {st_name} | 原始雨量值: {raw_rain}'
-        )
+          try:
+            precipitation = float(raw_rain)
+          except (ValueError, TypeError):
+            precipitation = 0.0
 
-        try:
-          precipitation = float(raw_rain)
-        except (ValueError, TypeError):
-          precipitation = 0.0
+          print(f'[{current_time}] 測站 ({town} - {st_name}) 雨量: {precipitation} mm')
 
-        # 如果雨量大於 0，發送 Discord 通知
-        if precipitation > 0:
-          msg = (
-              f'🚨 **【降雨警報】**\n'
-              f'**{TARGET_COUNTY}{TARGET_TOWN}** 測站 ({st_name}) 觀測到降雨！\n'
-              f'即時雨量：**{precipitation} mm**\n'
-              f'請注意出門安全！'
+          # 如果該測站有雨
+          if precipitation > 0:
+            raining_stations.append({
+                'town': town,
+                'name': st_name,
+                'rain': precipitation,
+            })
+
+      # 如果清單中有任何一個測站正在下雨，就發送 Discord 通知
+      if raining_stations:
+        msg_lines = ['🚨 **【鄰近區域降雨警報】**']
+        for s in raining_stations:
+          msg_lines.append(
+              f'• **{s["town"]}** ({s["name"]}) 即時雨量：**{s["rain"]} mm**'
           )
-          send_discord_message(msg)
-          print('📲 已發送降雨通知到 Discord')
-        else:
-          print('☀️ 目前無降雨')
+        msg_lines.append('請注意出門安全！')
+
+        full_msg = '\n'.join(msg_lines)
+        send_discord_message(full_msg)
+        print('📲 已發送多測站降雨通知到 Discord')
       else:
-        print('⚠️ 找不到符合的測站')
+        print('☀️ 監控區域目前皆無降雨')
+
+    else:
+      print('⚠️ 無法取得氣象站資料')
   except Exception as e:
     print(f'⚠️ 查詢發生錯誤: {e}')
 
