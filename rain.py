@@ -59,7 +59,10 @@ def main():
                 send_discord_message('\n'.join(msg_lines))
                 print('📲 已發送通知')
             else:
-                print('☀️ 目前皆無降雨')
+                # 幫我加上這行，這樣每次沒雨時，Log 也會印出時間，證明程式確實有在跑
+                print(
+                    f'☀️ [{datetime.now().strftime("%H:%M:%S")}] 目前皆無降雨'
+                )
         else:
             print(f'⚠️ API 狀態碼錯誤: {response.status_code}')
     except Exception as e:
