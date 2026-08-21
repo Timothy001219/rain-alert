@@ -1,30 +1,50 @@
 from datetime import datetime, timezone
+import json
 import os
 import requests
 import urllib3
 
-# 關閉 SSL 不安全請求警告（避免洗版主控台）
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# 從環境變數讀取金鑰與網址
 CWA_API_KEY = os.environ.get('CWA_API_KEY')
 DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL')
 
 TARGET_TOWNS = ['鹿港鎮', '福興鄉', '和美鎮']
+CACHE_FILE = 'last_alert.json'
+
+
+def load_last_alert():
+    """讀取上一次發送的紀錄"""
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+                return data.get('content', '')
+        except Exception as e:
+            print(f'⚠️ 讀取紀錄檔失敗: {e}')
+    return ''
+
+
+def save_last_alert(content):
+    """更新上一次發送的紀錄"""
+    try:
+        with open(CACHE_FILE, 'w', encoding='utf-8') as f:
+            json.dump({'content': content}, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f'⚠️ 寫入紀錄檔失敗: {e}')
 
 
 def send_discord_message(title, description, color=0x3498DB):
-    """發送 Discord 嵌入式 (Embed) 訊息"""
     if not DISCORD_WEBHOOK_URL:
         print('⚠️ 未設定 DISCORD_WEBHOOK_URL，跳過發送 Discord 訊息')
         return
 
     payload = {
-        "embeds": [{
-            "title": title,
-            "description": description,
-            "color": color,
-            "timestamp": datetime.now(timezone.utc).isoformat()
+        'embeds': [{
+            'title': title,
+            'description': description,
+            'color': color,
+            'timestamp': datetime.now(timezone.utc).isoformat(),
         }]
     }
     try:
@@ -38,7 +58,6 @@ def send_discord_message(title, description, color=0x3498DB):
 
 
 def parse_rainfall_value(val):
-    """解析雨量數值，排除 -99、-998 等氣象署無效值代碼"""
     try:
         num = float(val)
         return num if num >= 0 else 0.0
@@ -47,7 +66,6 @@ def parse_rainfall_value(val):
 
 
 def check_rain_stations(api_key):
-    """檢查地面雨量站即時雨量"""
     url = f'https://opendata.cwa.gov.tw/api/v1/rest/datastore/O-A0002-001?Authorization={api_key}'
     raining_stations = []
 
@@ -62,11 +80,12 @@ def check_rain_stations(api_key):
                 if town in TARGET_TOWNS:
                     st_name = st.get('StationName', '未知測站')
                     rainfall_elem = st.get('RainfallElement', {})
-                    raw_rain = rainfall_elem.get('Now', {}).get('Precipitation', 0.0)
+                    raw_rain = rainfall_elem.get('Now', {}).get(
+                        'Precipitation', 0.0
+                    )
 
                     precipitation = parse_rainfall_value(raw_rain)
 
-                    # 只有大於 0 mm 時才會記入降雨清單
                     if precipitation > 0:
                         raining_stations.append({
                             'town': town,
@@ -80,9 +99,8 @@ def check_rain_stations(api_key):
 
 
 def check_weather_warnings(api_key):
-    """檢查氣象署即時大雷雨/豪大雨特報"""
     url = f'https://opendata.cwa.gov.tw/api/v1/rest/datastore/W-C0033-001?Authorization={api_key}'
-    warnings = set()  # 使用 set 避免重複地點警報洗版
+    warnings = set()
 
     try:
         response = requests.get(url, verify=False, timeout=15)
@@ -128,27 +146,41 @@ def main():
 
     if raining_stations:
         if msg_lines:
-            msg_lines.append('')  # 分隔空行
+            msg_lines.append('')
         msg_lines.append('🚨 **【區域即時降雨回報】**')
         for s in raining_stations:
-            msg_lines.append(f'• **{s["town"]}** ({s["name"]}) 即時雨量：**{s["rain"]} mm**')
+            msg_lines.append(
+                f'• **{s["town"]}** ({s["name"]}) 即時雨量：**{s["rain"]} mm**'
+            )
 
-    # 只有在 msg_lines 不為空（有特報或有降雨測站）時才會發送訊息
-    if msg_lines:
-        msg_lines.append('\n請注意天氣變化與出門安全！')
-        
-        # 發布特報用紅色卡片 (0xE74C3C)，僅降雨用藍色卡片 (0x3498DB)
-        embed_color = 0xE74C3C if weather_warnings else 0x3498DB
-        
-        send_discord_message(
-            title="☔ 區域即時天氣警報通知",
-            description='\n'.join(msg_lines),
-            color=embed_color
-        )
-        print('📲 已發送警報通知到 Discord')
-    else:
-        # 完全沒降雨且沒特報時，只會印出 Log，絕不發送 Discord 訊息
+    # 無降雨且無特報
+    if not msg_lines:
         print('☀️ 監控區域目前無降雨且無大雷雨特報')
+        if load_last_alert() != '':
+            save_last_alert('')
+            print('🔄 已重置天氣狀態紀錄（目前為晴朗/無雨）')
+        return
+
+    current_alert_content = '\n'.join(msg_lines)
+    last_alert_content = load_last_alert()
+
+    # 比對本次與上次是否相同
+    if current_alert_content == last_alert_content:
+        print('⏭️ 天氣狀況與上一次通知相同，跳過發送 Discord 訊息')
+        return
+
+    # 發送訊息並更新紀錄
+    msg_lines.append('\n請注意天氣變化與出門安全！')
+    embed_color = 0xE74C3C if weather_warnings else 0x3498DB
+
+    send_discord_message(
+        title='☔ 區域即時天氣警報通知',
+        description='\n'.join(msg_lines),
+        color=embed_color,
+    )
+
+    save_last_alert(current_alert_content)
+    print('📲 已發送警報通知到 Discord，並已更新本地紀錄檔')
 
 
 if __name__ == '__main__':
