@@ -1,30 +1,39 @@
-name: Rain Check Workflow
+name: 天氣監控與 Discord 警報
 
 on:
   schedule:
-    # 預設使用 UTC 時間，每 5 分鐘執行一次
-    - cron: '*/5 * * * *'
-  workflow_dispatch: # 允許手動點擊按鈕測試
+    # 每 10 分鐘自動執行一次 (UTC 時間)
+    - cron: '*/10 * * * *'
+  workflow_dispatch: # 支援在 GitHub 介面上手動點擊測試
 
 jobs:
-  run-rain-script:
+  check-weather:
     runs-on: ubuntu-latest
+
     steps:
-      - name: Checkout code
+      - name: 檢出程式碼
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: 設定 Python 環境
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.11'
 
-      - name: Install dependencies
+      - name: 安裝套件
         run: |
-          pip install requests
+          python -m pip install --upgrade pip
+          pip install requests urllib3
 
-      - name: Run script
+      # ⭐ 核心步驟：快取 last_alert.json 檔案
+      - name: 載入 / 儲存天氣歷史紀錄快取
+        uses: actions/cache@v4
+        with:
+          path: last_alert.json
+          # key 使用固定名稱，確保每次執行都能讀取/覆蓋同一個快取紀錄
+          key: weather-last-alert-cache
+
+      - name: 執行天氣監控腳本
         env:
           CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-        run: |
-          python rain.py
+        run: python weather.py
