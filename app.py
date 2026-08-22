@@ -1,6 +1,6 @@
 from threading import Thread
 from flask import Flask
-import main  # 匯入原本的輪詢主程式
+import rain  # 匯入原本的輪詢主程式
 
 app = Flask('')
 
