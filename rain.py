@@ -152,6 +152,8 @@ def main():
             msg_lines.append(
                 f'• **{s["town"]}** ({s["name"]}) 即時雨量：**{s["rain"]} mm**'
             )
+    # 測試用：強制加入測試訊息以確認 Discord 機器人功能正常
+    msg_lines.append("🧪 **測試發送訊息**")
 
     # 無降雨且無特報
     if not msg_lines:
