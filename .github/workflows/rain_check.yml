@@ -10,6 +10,10 @@ jobs:
   check-weather:
     runs-on: ubuntu-latest
 
+    # 必須開啟寫入權限，才能讓 Git 把紀錄檔 Commit 並 Push 回去
+    permissions:
+      contents: write
+
     steps:
       - name: 檢出程式碼
         uses: actions/checkout@v4
@@ -24,26 +28,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests urllib3
 
-      # 下載上一次發佈的紀錄檔（避免發送重複訊息）
-      - name: 下載歷史紀錄
-        uses: dawidd6/action-download-artifact@v6
-        continue-on-error: true
-        with:
-          name: last-alert-data
-          path: .
-
       - name: 執行天氣監控腳本
         env:
           CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python rain.py
 
-      # 上傳本次執行後產生的紀錄檔（會覆蓋同名 Artifact）
-      - name: 上傳更新後的歷史紀錄
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: last-alert-data
-          path: last_alert.json
-          retention-days: 1
-          overwrite: true
+      - name: Commit 並 Push 歷史紀錄檔
+        run: |
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email 'github-actions[bot]@users.noreply.github.com'
+          git add last_alert.json alert_history.log || true
+          
+          # 若有歷史紀錄更新才做 Commit，避免無變更時報錯
+          if ! git diff --cached --quiet; then
+            git commit -m "chore: 更新天氣警報歷史紀錄 [skip ci]"
+            git push
+          else
+            echo "無新發送紀錄，跳過 Commit"
+          fi
