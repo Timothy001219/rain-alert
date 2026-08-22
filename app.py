@@ -20,4 +20,4 @@ if __name__ == '__main__':
     t.start()
 
     # 執行你原本的輪詢程式
-    main.main()
+    rain.main()
