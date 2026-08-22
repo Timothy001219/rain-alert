@@ -1,57 +1,44 @@
 from datetime import datetime, timezone
 import json
 import os
+import time
 import requests
 import urllib3
 
 # 關閉 SSL 不安全請求警告
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
+# 從環境變數讀取 API Key 與 Webhook
 CWA_API_KEY = os.environ.get('CWA_API_KEY')
 DISCORD_WEBHOOK_URL = os.environ.get('DISCORD_WEBHOOK_URL')
 
 TARGET_TOWNS = ['鹿港鎮', '福興鄉', '和美鎮']
 CACHE_FILE = 'last_alert.json'
-LOG_FILE = 'alert_history.log'
+CHECK_INTERVAL_SECONDS = 30  # 檢查間隔時間 (秒)
 
 
 def load_last_alert():
-    """讀取上一次發送的紀錄快取"""
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, 'r', encoding='utf-8') as f:
                 data = json.load(f)
                 return data.get('content', '')
         except Exception as e:
-            print(f'⚠️ 讀取紀錄檔失敗: {e}')
+            print(f'⚠️ 讀取快取失敗: {e}')
     return ''
 
 
 def save_last_alert(content):
-    """更新上一次發送的紀錄快取"""
     try:
         with open(CACHE_FILE, 'w', encoding='utf-8') as f:
             json.dump({'content': content}, f, ensure_ascii=False, indent=2)
     except Exception as e:
-        print(f'⚠️ 寫入紀錄檔失敗: {e}')
-
-
-def record_log(content):
-    """將發送紀錄與 UTC+8 時間追加寫入 alert_history.log"""
-    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    log_entry = f'[{now_str}] 📲 已發送警報:\n{content}\n' + ('-' * 40) + '\n'
-
-    try:
-        with open(LOG_FILE, 'a', encoding='utf-8') as f:
-            f.write(log_entry)
-        print(f'📝 [歷史紀錄已更新寫入 {LOG_FILE}]')
-    except Exception as e:
-        print(f'⚠️ 寫入歷史紀錄檔失敗: {e}')
+        print(f'⚠️ 寫入快取失敗: {e}')
 
 
 def send_discord_message(title, description, color=0x3498DB):
     if not DISCORD_WEBHOOK_URL:
-        print('⚠️ 未設定 DISCORD_WEBHOOK_URL，跳過發送 Discord 訊息')
+        print('⚠️ 未設定 DISCORD_WEBHOOK_URL，跳過發送')
         return False
 
     payload = {
@@ -65,7 +52,7 @@ def send_discord_message(title, description, color=0x3498DB):
     try:
         response = requests.post(DISCORD_WEBHOOK_URL, json=payload, timeout=5)
         if response.status_code in [200, 204]:
-            print('📲 [Discord 訊息已成功發送]')
+            print('📲 [Discord 訊息發送成功]')
             return True
         else:
             print(f'❌ Discord 發送失敗，狀態碼: {response.status_code}')
@@ -105,7 +92,6 @@ def check_rain_stations(api_key):
                     )
 
                     precipitation = parse_rainfall_value(raw_rain)
-
                     if precipitation > 0:
                         raining_stations.append({
                             'town': town,
@@ -140,7 +126,7 @@ def check_weather_warnings(api_key):
                     if '彰化縣' in loc_name:
                         warnings.add(
                             f'⚠️ **氣象署發布【{phenomena}】警報**'
-                            ' (影響範圍包含彰化縣)'
+                            ' (涵蓋彰化縣)'
                         )
     except Exception as e:
         print(f'⚠️ 天氣特報查詢錯誤: {e}')
@@ -148,19 +134,18 @@ def check_weather_warnings(api_key):
     return list(warnings)
 
 
-def main():
+def run_check():
     if not CWA_API_KEY:
         print('❌ 錯誤: 未設定 CWA_API_KEY')
         return
 
-    current_time = datetime.now().strftime('%H:%M:%S')
-    print(f'[{current_time}] 正在執行全面天氣與雨量掃描...')
+    now_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    print(f'[{now_str}] 正在掃描天氣狀態...')
 
     raining_stations = check_rain_stations(CWA_API_KEY)
     weather_warnings = check_weather_warnings(CWA_API_KEY)
 
     msg_lines = []
-
     if weather_warnings:
         msg_lines.extend(weather_warnings)
 
@@ -173,23 +158,20 @@ def main():
                 f'• **{s["town"]}** ({s["name"]}) 即時雨量：**{s["rain"]} mm**'
             )
 
-    # 無降雨且無特報
     if not msg_lines:
-        print('☀️ 監控區域目前無降雨且無大雷雨特報')
+        print('☀️ 目前無雨量且無大雷雨特報')
         if load_last_alert() != '':
             save_last_alert('')
-            print('🔄 已重置天氣狀態紀錄（目前為晴朗/無雨）')
+            print('🔄 已重置天氣狀態紀錄')
         return
 
     current_alert_content = '\n'.join(msg_lines)
     last_alert_content = load_last_alert()
 
-    # 比對與上一次通知是否相同
     if current_alert_content == last_alert_content:
-        print('⏭️ 天氣狀況與上一次通知相同，跳過發送 Discord 訊息')
+        print('⏭️ 天氣狀況與上次相同，跳過發送')
         return
 
-    # 發送訊息
     full_msg = msg_lines + ['\n請注意天氣變化與出門安全！']
     embed_color = 0xE74C3C if weather_warnings else 0x3498DB
 
@@ -201,8 +183,19 @@ def main():
 
     if success:
         save_last_alert(current_alert_content)
-        record_log(current_alert_content)  # 追加歷史時間紀錄
-        print('📲 已發送警報通知到 Discord，並已更新本地紀錄檔')
+
+
+def main():
+    print(
+        f'🚀 Render 背景監控服務已啟動！每 {CHECK_INTERVAL_SECONDS} 秒執行一次...'
+    )
+    while True:
+        try:
+            run_check()
+        except Exception as e:
+            print(f'❌ 執行過程發生例外錯誤: {e}')
+
+        time.sleep(CHECK_INTERVAL_SECONDS)
 
 
 if __name__ == '__main__':
