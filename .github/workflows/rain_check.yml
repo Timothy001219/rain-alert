@@ -24,16 +24,26 @@ jobs:
           python -m pip install --upgrade pip
           pip install requests urllib3
 
-      # ⭐ 核心步驟：快取 last_alert.json 檔案
-      - name: 載入 / 儲存天氣歷史紀錄快取
-        uses: actions/cache@v4
+      # 下載上一次發佈的紀錄檔（避免發送重複訊息）
+      - name: 下載歷史紀錄
+        uses: dawidd6/action-download-artifact@v6
+        continue-on-error: true
         with:
-          path: last_alert.json
-          # key 使用固定名稱，確保每次執行都能讀取/覆蓋同一個快取紀錄
-          key: weather-last-alert-cache
+          name: last-alert-data
+          path: .
 
       - name: 執行天氣監控腳本
         env:
           CWA_API_KEY: ${{ secrets.CWA_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
         run: python rain.py
+
+      # 上傳本次執行後產生的紀錄檔（會覆蓋同名 Artifact）
+      - name: 上傳更新後的歷史紀錄
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: last-alert-data
+          path: last_alert.json
+          retention-days: 1
+          overwrite: true
