@@ -11,7 +11,7 @@ st.set_page_config(
 
 st.title('📈 台股技術面與基本面快篩儀表板')
 st.markdown(
-    '結合 **yfinance (股價與技術指標)** 與 **Finmind (單月營收、累計營收 YoY、EPS與本益比)**'
+    '結合 **yfinance (股價、EPS、本益比與技術指標)** 與 **Finmind (單月營收與累計營收 YoY)**'
     ' 的個人專屬工具！'
 )
 st.markdown('---')
@@ -53,73 +53,6 @@ st.sidebar.markdown(
 )
 
 run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
-
-
-@st.cache_data(ttl=3600)
-def get_finmind_fundamentals(stock_id):
-  """從 FinMind 取得本益比、殖利率、EPS 與股利"""
-  pe_val, yield_val, eps_val, dividend_val = 'N/A', 'N/A', 'N/A', 'N/A'
-  start_date = (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d')
-
-  try:
-    # 1. 取得本益比與殖利率
-    url_per = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPER&data_id={stock_id}&start_date={start_date}'
-    res = requests.get(url_per, timeout=5)
-    if res.status_code == 200:
-      data = res.json()
-      if 'data' in data and len(data['data']) > 0:
-        df_pe = pd.DataFrame(data['data'])
-        latest = df_pe.iloc[-1]
-        if 'PE' in latest and pd.notna(latest['PE']):
-          pe_num = float(latest['PE'])
-          if pe_num > 0:
-            pe_val = f'{pe_num:.2f}'
-        if 'DividendYield' in latest and pd.notna(
-            latest['DividendYield']
-        ):
-          y_val = float(latest['DividendYield'])
-          if y_val > 0:
-            if y_val < 1:
-              y_val = y_val * 100
-            yield_val = f'{y_val:.2f}%'
-  except:
-    pass
-
-  try:
-    # 2. 取得 EPS
-    url_eps = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}'
-    res_eps = requests.get(url_eps, timeout=5)
-    if res_eps.status_code == 200:
-      data_eps = res_eps.json()
-      if 'data' in data_eps and len(data_eps['data']) > 0:
-        df_fin = pd.DataFrame(data_eps['data'])
-        eps_rows = df_fin[
-            df_fin['type'].str.contains('EPS|EarningsPerShare', case=False, na=False)
-        ]
-        if not eps_rows.empty:
-          latest_eps = eps_rows.iloc[-1]['value']
-          if pd.notna(latest_eps):
-            eps_val = f'{float(latest_eps):.2f}'
-  except:
-    pass
-
-  try:
-    # 3. 取得股利政策 (TaiwanStockDividend)
-    url_div = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDividend&data_id={stock_id}&start_date={start_date}'
-    res_div = requests.get(url_div, timeout=5)
-    if res_div.status_code == 200:
-      data_div = res_div.json()
-      if 'data' in data_div and len(data_div['data']) > 0:
-        df_div = pd.DataFrame(data_div['data'])
-        # 尋找現金股利欄位 (CashDividend)
-        if 'CashDividend' in df_div.columns:
-          latest_div = df_div.iloc[-1]['CashDividend']
-          if pd.notna(latest_div) and float(latest_div) > 0:
-            dividend_val = f'{float(latest_div):.2f}元'
-  except:
-    pass
-
-  return pe_val, yield_val, eps_val, dividend_val
 
 
 @st.cache_data(ttl=3600)
@@ -194,12 +127,14 @@ def analyze_stock(stock_id, stock_name):
   stock_id = stock_id.strip()
   candidates = [f'{stock_id}.TW', f'{stock_id}.TWO']
   df = pd.DataFrame()
+  symbol = ''
 
   for cand in candidates:
     try:
       temp_df = yf.download(cand, period='6mo', interval='1d', progress=False)
       if not temp_df.empty:
         df = temp_df
+        symbol = cand
         break
     except:
       continue
@@ -220,44 +155,71 @@ def analyze_stock(stock_id, stock_name):
   except:
     pass
 
-  # 2. 取得基本面 (本益比、殖利率、EPS、股利)
-  pe_str, yield_str, eps_str, dividend_str = get_finmind_fundamentals(stock_id)
-  payout_str = 'N/A'
+  # 2. 透過 yfinance Ticker 抓取標準基本面 (EPS, PE, 股利, 殖利率)
+  eps_str, pe_str, dividend_str, yield_str, payout_str = (
+      'N/A',
+      'N/A',
+      'N/A',
+      'N/A',
+      'N/A',
+  )
+  try:
+    ticker = yf.Ticker(symbol)
+    info = ticker.info
 
-  # 💡 智慧防呆 1：本益比補底
+    # 修正現價（如果 info 有更即時的價格）
+    p_info = (
+        info.get('regularMarketPrice')
+        or info.get('currentPrice')
+        or info.get('previousClose')
+    )
+    if p_info and p_info > 0:
+      price_val = p_info
+      current_price = f'{price_val:.2f}'
+
+    # EPS
+    eps_val = info.get('trailingEps') or info.get('forwardEps')
+    if eps_val is not None:
+      eps_str = f'{eps_val:.2f}'
+
+    # 本益比
+    pe_val = info.get('trailingPE') or info.get('forwardPE')
+    if pe_val is not None and pe_val > 0:
+      pe_str = f'{pe_val:.2f}'
+
+    # 配息
+    div_val = (
+        info.get('dividendRate')
+        or info.get('lastDividendValue')
+        or info.get('trailingAnnualDividendRate')
+    )
+    if div_val is not None and div_val > 0:
+      dividend_str = f'{div_val:.2f}元'
+
+      # 計算殖利率
+      if price_val and price_val > 0:
+        y_val = (div_val / price_val) * 100
+        yield_str = f'{y_val:.2f}%'
+
+      # 計算配息率
+      if eps_val is not None and eps_val > 0:
+        p_rate = (div_val / eps_val) * 100
+        payout_str = f'{p_rate:.1f}%'
+  except:
+    pass
+
+  # 💡 智慧防呆：如果 yfinance 抓不到本益比但有 EPS 與現價，且數值合理才計算
   if pe_str == 'N/A' and price_val and eps_str != 'N/A':
     try:
       e_val = float(eps_str)
       if e_val > 0:
         calc_pe = price_val / e_val
-        pe_str = f'{calc_pe:.2f}'
+        if (
+            0 < calc_pe < 300
+        ):  # 限制合理本益比區間，避免異常單季資料造成暴衝
+          pe_str = f'{calc_pe:.2f}'
     except:
       pass
-
-  # 💡 智慧防呆 2：若有股利但無殖利率，自動用現價計算殖利率
-  try:
-    if dividend_str != 'N/A' and price_val and price_val > 0:
-      d_num = float(dividend_str.replace('元', ''))
-      if yield_str == 'N/A':
-        calc_yield = (d_num / price_val) * 100
-        yield_str = f'{calc_yield:.2f}%'
-    elif yield_str != 'N/A' and price_val and dividend_str == 'N/A':
-      y_num = float(yield_str.replace('%', ''))
-      calc_div = (y_num / 100) * price_val
-      dividend_str = f'{calc_div:.2f}元'
-  except:
-    pass
-
-  # 💡 智慧防呆 3：計算配息率 (現金股利 / EPS)
-  try:
-    if dividend_str != 'N/A' and eps_str != 'N/A':
-      d_num = float(dividend_str.replace('元', ''))
-      e_num = float(eps_str)
-      if e_num > 0:
-        calc_payout = (d_num / e_num) * 100
-        payout_str = f'{calc_payout:.1f}%'
-  except:
-    pass
 
   # 3. 技術指標計算 (KD)
   n = 9
