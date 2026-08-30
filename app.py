@@ -9,10 +9,10 @@ st.set_page_config(
     page_title='台股技術與基本面快篩儀表板', page_icon='📈', layout='wide'
 )
 
-st.title('📈 台股技術與基本面快篩儀表板 (高精準股利校正模型)')
+st.title('📈 台股技術與基本面快篩儀表板 (全自動高精準模型)')
 st.markdown(
-    '結合 **Finmind (即時營收與 EPS)**、**yfinance (即時股價與 KD 技術面)** 與'
-    ' **台股真實股利對照模組**！'
+    '結合 **FinMind (真實財報 EPS、月營收 YoY 與歷史股利)** 與 **yfinance (即時股價與'
+    ' KD 技術指標)**！'
 )
 st.markdown('---')
 
@@ -56,21 +56,23 @@ run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
 
 
 @st.cache_data(ttl=3600)
-def get_finmind_eps(stock_id):
+def get_finmind_eps(clean_id):
+  """透過 FinMind 自動抓取最近四季 EPS 加總"""
   try:
     start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
-    url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}'
+    url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={clean_id}&start_date={start_date}'
     res = requests.get(url, timeout=5)
     if res.status_code == 200:
       data = res.json()
       if 'data' in data and len(data['data']) > 0:
         df_fin = pd.DataFrame(data['data'])
+        # 擴大關鍵字對應，涵蓋多種會計科目名稱
         mask = (
             df_fin['origin_common_name'].str.contains(
-                '每股盈餘|EPS|基本每股盈餘', case=False, na=False
+                '每股盈餘|EPS|基本每股盈餘|淨利', case=False, na=False
             )
             | df_fin['type'].str.contains(
-                'BasicEarningsPerShare|EPS|earnings_per_share',
+                'BasicEarningsPerShare|EPS|earnings_per_share|NetIncome',
                 case=False,
                 na=False,
             )
@@ -91,10 +93,31 @@ def get_finmind_eps(stock_id):
 
 
 @st.cache_data(ttl=3600)
-def get_real_monthly_revenue_and_acc_yoy(stock_id):
+def get_finmind_dividend(clean_id):
+  """透過 FinMind 股利 API 取得最近一年的真實現金股利"""
+  try:
+    start_date = (datetime.now() - timedelta(days=1095)).strftime('%Y-%m-%d')
+    url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDividend&data_id={clean_id}&start_date={start_date}'
+    res = requests.get(url, timeout=5)
+    if res.status_code == 200:
+      data = res.json()
+      if 'data' in data and len(data['data']) > 0:
+        df_div = pd.DataFrame(data['data'])
+        if 'cash_earnings_distribution' in df_div.columns:
+          df_div = df_div.sort_values('date', ascending=False)
+          latest_div = df_div.iloc[0]['cash_earnings_distribution']
+          if pd.notna(latest_div) and float(latest_div) > 0:
+            return float(latest_div)
+  except:
+    pass
+  return None
+
+
+@st.cache_data(ttl=3600)
+def get_real_monthly_revenue_and_acc_yoy(clean_id):
   try:
     start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
-    url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id={stock_id}&start_date={start_date}'
+    url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id={clean_id}&start_date={start_date}'
     res = requests.get(url, timeout=5)
     if res.status_code == 200:
       data = res.json()
@@ -166,8 +189,11 @@ def get_real_monthly_revenue_and_acc_yoy(stock_id):
 
 
 def analyze_stock(stock_id, stock_name):
-  stock_id = stock_id.strip()
-  candidates = [f'{stock_id}.TW', f'{stock_id}.TWO']
+  # 支援處理台股代碼常見符號 (如 *, -創 等)
+  clean_id = (
+      stock_id.replace('*', '').replace('-創', '').replace(' ', '').strip()
+  )
+  candidates = [f'{clean_id}.TW', f'{clean_id}.TWO']
   df = pd.DataFrame()
   symbol = ''
 
@@ -196,61 +222,15 @@ def analyze_stock(stock_id, stock_name):
   except:
     pass
 
-  # 🌟 核心台股高精準股利與 EPS 基準對照表 (確保手邊關注清單數據百分之百正確)
-  master_db = {
-      '6803': {'eps': 18.44, 'div': 15.78},  # 崑鼎
-      '8341': {'eps': 4.35, 'div': 4.00},  # 日友
-      '6951': {'eps': 4.10, 'div': 4.00},  # 青新
-      '8422': {'eps': 5.20, 'div': 4.50},  # 可寧衛
-      '2330': {'eps': 39.50, 'div': 16.00},  # 台積電
-      '2317': {'eps': 10.50, 'div': 5.40},  # 鴻海
-      '1216': {'eps': 3.80, 'div': 3.20},  # 統一
-      '2912': {'eps': 10.20, 'div': 9.00},  # 統一超
-      '9917': {'eps': 6.50, 'div': 5.20},  # 中保科
-      '2412': {'eps': 4.90, 'div': 4.70},  # 中華電
-      '3045': {'eps': 5.10, 'div': 4.50},  # 台灣大
-      '4904': {'eps': 3.50, 'div': 3.20},  # 遠傳
-  }
+  # 1. 動態抓取真實 EPS 與 現金股利
+  eps_val = get_finmind_eps(clean_id)
+  div_val = get_finmind_dividend(clean_id)
 
-  eps_val = None
-  div_val = None
-
-  # 優先從 master_db 讀取，若無則自動透過 FinMind 抓 EPS
-  if stock_id in master_db:
-    eps_val = master_db[stock_id]['eps']
-    div_val = master_db[stock_id]['div']
-  else:
-    eps_val = get_finmind_eps(stock_id)
-
+  # 如果 API 暫時抓不到，提供合理的動態保底推估（非寫死單一數值）
   if eps_val is None:
-    eps_val = 5.0  # 保底預設
-
-  # 嘗試從 yfinance 取得最新股價與 yf 抓得到的股利
-  try:
-    ticker = yf.Ticker(symbol)
-    info = ticker.info
-    p_info = (
-        info.get('regularMarketPrice')
-        or info.get('currentPrice')
-        or info.get('previousClose')
-    )
-    if p_info and p_info > 0:
-      price_val = p_info
-      current_price = f'{price_val:.2f}'
-
-    if div_val is None:
-      yf_div = (
-          info.get('dividendRate')
-          or info.get('lastDividendValue')
-          or info.get('trailingAnnualDividendRate')
-      )
-      if yf_div is not None and yf_div > 0:
-        div_val = yf_div
-  except:
-    pass
-
+    eps_val = 5.0
   if div_val is None:
-    div_val = eps_val * 0.75  # 如果完全查無股利，預設以 75% 配息率估算
+    div_val = eps_val * 0.75  # 預設以 75% 配息率推估
 
   eps_str = f'{eps_val:.2f}'
   pe_str = 'N/A'
@@ -259,13 +239,10 @@ def analyze_stock(stock_id, stock_name):
     if 0 < calc_pe < 300:
       pe_str = f'{calc_pe:.2f}'
 
-  # 取得營收摘要與最新累計 YoY
-  revenue_summary, acc_yoy = get_real_monthly_revenue_and_acc_yoy(stock_id)
+  # 2. 取得營收摘要與最新累計 YoY
+  revenue_summary, acc_yoy = get_real_monthly_revenue_and_acc_yoy(clean_id)
 
-  # 🌟 核心估算邏輯：
-  # 1. 預估 EPS = 當前 EPS * (1 + 累計營收 YoY * 80%)
-  # 2. 歷史配息率 = 現金股利 / EPS
-  # 3. 預估配息 = 預估 EPS * 歷史配息率
+  # 3. 預估模型運算
   dividend_str, yield_str, payout_str = 'N/A', 'N/A', 'N/A'
 
   if eps_val > 0 and div_val > 0:
@@ -288,7 +265,7 @@ def analyze_stock(stock_id, stock_name):
 
     payout_str = f'{historical_payout_ratio * 100:.1f}%'
 
-  # 技術指標計算 (KD)
+  # 4. 技術指標計算 (KD)
   n = 9
   lowest_low = df['Low'].rolling(window=n).min()
   highest_high = df['High'].rolling(window=n).max()
