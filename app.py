@@ -9,10 +9,10 @@ st.set_page_config(
     page_title='台股技術與基本面快篩儀表板', page_icon='📈', layout='wide'
 )
 
-st.title('📈 台股技術面與基本面快篩儀表板 (精準校正版)')
+st.title('📈 台股技術面與基本面快篩儀表板 (全自動動態推估模型)')
 st.markdown(
-    '結合 **Finmind (營收 YoY)**、**精準財報防呆庫** 與 **「累計營收 80% 估算 EPS $\rightarrow$ 預估配息」**'
-    ' 模組！'
+    '結合 **Finmind (真實財報 EPS 與累計營收 YoY)**、**yfinance (即時股價與技術指標)**'
+    ' 與 **動態配息推估模組**！'
 )
 st.markdown('---')
 
@@ -53,6 +53,42 @@ st.sidebar.markdown(
 )
 
 run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
+
+
+@st.cache_data(ttl=3600)
+def get_finmind_eps(stock_id):
+  """透過 FinMind 智慧抓取最近四季 EPS 加總"""
+  try:
+    start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
+    url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}'
+    res = requests.get(url, timeout=5)
+    if res.status_code == 200:
+      data = res.json()
+      if 'data' in data and len(data['data']) > 0:
+        df_fin = pd.DataFrame(data['data'])
+        mask = (
+            df_fin['origin_common_name'].str.contains(
+                '每股盈餘|EPS|基本每股盈餘', case=False, na=False
+            )
+            | df_fin['type'].str.contains(
+                'BasicEarningsPerShare|EPS|earnings_per_share',
+                case=False,
+                na=False,
+            )
+            | df_fin['type'] == 'EPS'
+        )
+        df_eps = df_fin[mask]
+        if not df_eps.empty:
+          df_eps['date'] = pd.to_datetime(df_eps['date'])
+          df_eps = df_eps.sort_values('date', ascending=False)
+          df_eps = df_eps.drop_duplicates(subset=['date'])
+          recent_4q = df_eps.head(4)
+          total_eps = recent_4q['value'].astype(float).sum()
+          if total_eps != 0:
+            return round(total_eps, 2)
+  except:
+    pass
+  return None
 
 
 @st.cache_data(ttl=3600)
@@ -161,29 +197,33 @@ def analyze_stock(stock_id, stock_name):
   except:
     pass
 
-  # 🌟 建立高精準度的台股基本面防呆資料庫 (EPS 與 最近現金股利)
-  # 若 API 抓取失敗或數值異常，將優先以此標準校正
-  master_db = {
-      '6803': {'eps': 18.44, 'div': 15.78},  # 崑鼎
-      '8422': {'eps': 5.20, 'div': 4.50},  # 可寧衛
-      '8341': {'eps': 4.35, 'div': 3.50},  # 日友
-      '6951': {'eps': 4.10, 'div': 3.20},  # 青新
-      '2330': {'eps': 39.50, 'div': 16.00},  # 台積電
-      '2317': {'eps': 10.50, 'div': 5.40},  # 鴻海
+  # 1. 取得真實 EPS (優先使用 FinMind API 自動抓取)
+  eps_val = get_finmind_eps(stock_id)
+
+  # 備用 EPS 字典 (僅作為 FinMind 抓不到時的保底或核心精準校正)
+  fallback_eps = {
+      '6803': 18.44,  # 崑鼎
+      '8422': 5.20,  # 可寧衛
+      '8341': 4.35,  # 日友
+      '6951': 4.10,  # 青新
   }
 
-  eps_val = None
+  if eps_val is None and stock_id in fallback_eps:
+    eps_val = fallback_eps[stock_id]
+
+  eps_str = 'N/A'
+  if eps_val is not None:
+    eps_str = f'{eps_val:.2f}'
+
+  # 2. 取得現金股利 (優先從 yfinance 抓取，若無則依據特定標的或以預設 70% 配息率估算)
   div_val = None
+  fallback_divs = {
+      '6803': 15.78,  # 崑鼎
+      '8422': 4.50,  # 可寧衛
+      '8341': 3.50,  # 日友
+      '6951': 3.20,  # 青新
+  }
 
-  if stock_id in master_db:
-    eps_val = master_db[stock_id]['eps']
-    div_val = master_db[stock_id]['div']
-  else:
-    # 預設給予基礎保底數值避免 N/A
-    eps_val = 5.0
-    div_val = 3.0
-
-  # 嘗試透過 yfinance 覆蓋最新即時股價
   try:
     ticker = yf.Ticker(symbol)
     info = ticker.info
@@ -195,26 +235,38 @@ def analyze_stock(stock_id, stock_name):
     if p_info and p_info > 0:
       price_val = p_info
       current_price = f'{price_val:.2f}'
+
+    yf_div = (
+        info.get('dividendRate')
+        or info.get('lastDividendValue')
+        or info.get('trailingAnnualDividendRate')
+    )
+    if yf_div is not None and yf_div > 0:
+      div_val = yf_div
   except:
     pass
 
-  eps_str = f'{eps_val:.2f}'
+  if div_val is None and stock_id in fallback_divs:
+    div_val = fallback_divs[stock_id]
+
+  # 如果還是沒有配息資料，但有 EPS，則預設以 75% 配息率自動推估一個基準配息
+  if div_val is None and eps_val is not None and eps_val > 0:
+    div_val = eps_val * 0.75
+
+  # 計算本益比
   pe_str = 'N/A'
-  if price_val and eps_val > 0:
+  if price_val and eps_val is not None and eps_val > 0:
     calc_pe = price_val / eps_val
     if 0 < calc_pe < 300:
       pe_str = f'{calc_pe:.2f}'
 
-  # 取得營收摘要與最新累計 YoY
+  # 3. 取得營收摘要與最新累計 YoY
   revenue_summary, acc_yoy = get_real_monthly_revenue_and_acc_yoy(stock_id)
 
-  # 🌟 核心估算邏輯：
-  # 1. 預估 EPS = 當前 EPS * (1 + 累計營收 YoY * 80%)
-  # 2. 歷史配息率 = 現金股利 / EPS
-  # 3. 預估配息 = 預估 EPS * 歷史配息率
+  # 4. 套用「累計營收 80% 估算 EPS $\rightarrow$ 配息率推估未來配息與殖利率」模型
   dividend_str, yield_str, payout_str = 'N/A', 'N/A', 'N/A'
 
-  if eps_val > 0 and div_val > 0:
+  if eps_val is not None and eps_val > 0 and div_val is not None:
     historical_payout_ratio = div_val / eps_val
     estimated_eps = eps_val * (1 + (acc_yoy / 100.0) * 0.8)
     estimated_div = estimated_eps * historical_payout_ratio
@@ -234,7 +286,7 @@ def analyze_stock(stock_id, stock_name):
 
     payout_str = f'{historical_payout_ratio * 100:.1f}%'
 
-  # 技術指標計算 (KD)
+  # 5. 技術指標計算 (KD)
   n = 9
   lowest_low = df['Low'].rolling(window=n).min()
   highest_high = df['High'].rolling(window=n).max()
