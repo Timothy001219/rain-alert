@@ -92,15 +92,12 @@ def get_real_monthly_revenue(stock_id):
               )
               yoy_str = f'{yoy:+.2f}%'
 
-          # 計算累計營收 (當年度 1月 到 該月份)
           curr_year = curr_date.year
-          # 今年累計
           this_year_mask = (df_rev['date'].dt.year == curr_year) & (
               df_rev['date'].dt.month <= curr_date.month
           )
           this_year_acc = df_rev[this_year_mask]['revenue'].sum() / 1e8
 
-          # 去年累計
           last_year_mask = (df_rev['date'].dt.year == curr_year - 1) & (
               df_rev['date'].dt.month <= curr_date.month
           )
@@ -161,41 +158,62 @@ def analyze_stock(stock_id, stock_name):
   try:
     ticker = yf.Ticker(symbol)
     info = ticker.info
+
+    # 取得現價 (優先從 info 抓，若無則從歷史數據最後一筆 Close 抓)
     price_val = (
         info.get('regularMarketPrice')
         or info.get('currentPrice')
-        or df['Close'].iloc[-1]
+        or info.get('previousClose')
     )
+    if not price_val and not df.empty:
+      price_val = df['Close'].iloc[-1]
+
     if price_val:
       current_price = f'{price_val:.2f}'
 
-    eps_val = info.get('trailingEps')
+    # 取得 EPS
+    eps_val = info.get('trailingEps') or info.get('forwardEps')
     if eps_val is not None:
       eps_str = f'{eps_val:.2f}'
 
-    pe_val = info.get('trailingPE')
+    # 取得本益比
+    pe_val = info.get('trailingPE') or info.get('forwardPE')
     if pe_val is not None:
       pe_str = f'{pe_val:.2f}'
 
-    div_val = info.get('dividendRate') or info.get('lastDividendValue')
-    if div_val is not None:
+    # 取得配息
+    div_val = (
+        info.get('dividendRate')
+        or info.get('lastDividendValue')
+        or info.get('trailingAnnualDividendRate')
+    )
+    if div_val is not None and div_val > 0:
       dividend_str = f'{div_val:.2f}元'
     else:
       div_val = 0.0
+      dividend_str = '0.00元'
 
+    # 計算殖利率
     if div_val > 0 and price_val and price_val > 0:
       calc_yield = (div_val / price_val) * 100
       yield_str = f'{calc_yield:.2f}%'
     else:
-      yield_str = 'N/A'
+      yield_str = '0.00%'
 
+    # 計算配息率
     if div_val > 0 and eps_val is not None and eps_val > 0:
       calc_payout = (div_val / eps_val) * 100
       payout_str = f'{calc_payout:.1f}%'
     else:
       payout_str = 'N/A'
+
   except:
     pass
+
+  # 如果價格還是抓不到，用歷史收盤補底
+  if current_price == 'N/A' and not df.empty:
+    price_val = df['Close'].iloc[-1]
+    current_price = f'{price_val:.2f}'
 
   n = 9
   lowest_low = df['Low'].rolling(window=n).min()
