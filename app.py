@@ -57,42 +57,54 @@ run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
 
 @st.cache_data(ttl=3600)
 def get_finmind_fundamentals(stock_id):
-  """從 FinMind 取得 EPS、本益比、殖利率等數據"""
+  """從 FinMind 取得 EPS、本益比、殖利率等數據（強化版）"""
+  pe_val, yield_val, eps_val = 'N/A', 'N/A', 'N/A'
+  start_date = (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d')
+
   try:
-    start_date = (datetime.now() - timedelta(days=120)).strftime('%Y-%m-%d')
-    url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPER&data_id={stock_id}&start_date={start_date}'
-    res = requests.get(url, timeout=5)
-    pe_val, yield_val, eps_val = 'N/A', 'N/A', 'N/A'
+    # 1. 取得本益比與殖利率
+    url_per = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPER&data_id={stock_id}&start_date={start_date}'
+    res = requests.get(url_per, timeout=5)
     if res.status_code == 200:
       data = res.json()
       if 'data' in data and len(data['data']) > 0:
         df_pe = pd.DataFrame(data['data'])
         latest = df_pe.iloc[-1]
         if 'PE' in latest and pd.notna(latest['PE']):
-          pe_val = f"{float(latest['PE']):.2f}"
-        if 'DividendYield' in latest and pd.notna(latest['DividendYield']):
-          # Finmind 的殖利率通常是百分比數字或小數，視情況處理
+          pe_num = float(latest['PE'])
+          if pe_num > 0:
+            pe_val = f'{pe_num:.2f}'
+        if 'DividendYield' in latest and pd.notna(
+            latest['DividendYield']
+        ):
           y_val = float(latest['DividendYield'])
+          # FinMind 有時候殖利率是小數（例如 0.04）或百分比（例如 4.0）
+          if y_val < 1:
+            y_val = y_val * 100
           yield_val = f'{y_val:.2f}%'
+  except:
+    pass
 
-    # 取得 EPS (來自 FinMind TaiwanStockFinancialStatements 或 TaiwanStockMonthRevenue)
+  try:
+    # 2. 取得 EPS (改抓 TaiwanStockFinancialStatements 並放寬篩選條件)
     url_eps = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}'
     res_eps = requests.get(url_eps, timeout=5)
     if res_eps.status_code == 200:
       data_eps = res_eps.json()
       if 'data' in data_eps and len(data_eps['data']) > 0:
         df_fin = pd.DataFrame(data_eps['data'])
-        # 篩選 EPS 項目
-        df_eps = df_fin[
-            df_fin['type'] == 'BasicEarningsPerShare'
-        ]  # 或者依實際欄位
-        if not df_eps.empty:
-          latest_eps = df_eps.iloc[-1]['value']
-          eps_val = f'{float(latest_eps):.2f}'
-
-    return pe_val, yield_val, eps_val
+        # 尋找包含 EPS 或 BasicEarningsPerShare 的欄位
+        eps_rows = df_fin[
+            df_fin['type'].str.contains('EPS|EarningsPerShare', case=False, na=False)
+        ]
+        if not eps_rows.empty:
+          latest_eps = eps_rows.iloc[-1]['value']
+          if pd.notna(latest_eps):
+            eps_val = f'{float(latest_eps):.2f}'
   except:
-    return 'N/A', 'N/A', 'N/A'
+    pass
+
+  return pe_val, yield_val, eps_val
 
 
 @st.cache_data(ttl=3600)
@@ -167,14 +179,12 @@ def analyze_stock(stock_id, stock_name):
   stock_id = stock_id.strip()
   candidates = [f'{stock_id}.TW', f'{stock_id}.TWO']
   df = pd.DataFrame()
-  symbol = ''
 
   for cand in candidates:
     try:
       temp_df = yf.download(cand, period='6mo', interval='1d', progress=False)
       if not temp_df.empty:
         df = temp_df
-        symbol = cand
         break
     except:
       continue
@@ -185,7 +195,7 @@ def analyze_stock(stock_id, stock_name):
   if isinstance(df.columns, pd.MultiIndex):
     df.columns = df.columns.get_level_values(0)
 
-  # 1. 取得股價 (yfinance 最擅長的部分)
+  # 1. 取得現價
   current_price = 'N/A'
   try:
     price_val = df['Close'].iloc[-1]
@@ -194,12 +204,12 @@ def analyze_stock(stock_id, stock_name):
   except:
     pass
 
-  # 2. 取得基本面 (改從 FinMind 取得本益比、殖利率、EPS)
+  # 2. 取得基本面 (本益比、殖利率、EPS)
   pe_str, yield_str, eps_str = get_finmind_fundamentals(stock_id)
   dividend_str = 'N/A'
   payout_str = 'N/A'
 
-  # 試算配息金額 (若有殖利率與現價)
+  # 試算配息金額與配息率
   try:
     if yield_str != 'N/A' and current_price != 'N/A':
       y_num = float(yield_str.replace('%', ''))
@@ -215,6 +225,7 @@ def analyze_stock(stock_id, stock_name):
   except:
     pass
 
+  # 3. 技術指標計算 (KD)
   n = 9
   lowest_low = df['Low'].rolling(window=n).min()
   highest_high = df['High'].rolling(window=n).max()
