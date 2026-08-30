@@ -11,8 +11,7 @@ st.set_page_config(
 
 st.title('📈 台股技術與基本面快篩儀表板 (網頁版精準實時數據)')
 st.markdown(
-    '結合 **yfinance 財報與現價** 與 **FinMind (營收與備援 EPS)**，確保數據精準'
-    '且無假保底！'
+    '結合 **yfinance 歷史股價** 與 **FinMind (真實財務 EPS 與營收)**，確保數據精準且無假保底！'
 )
 st.markdown('---')
 
@@ -57,7 +56,7 @@ run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
 
 @st.cache_data(ttl=3600)
 def get_finmind_eps_fallback(stock_id):
-  """如果 yfinance 抓不到 EPS，改用 FinMind 嚴格計算最近四季真實 EPS（絕不保底）"""
+  """直接從 FinMind 抓取最近四季財務報表並計算真實 EPS"""
   try:
     start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
     url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}'
@@ -169,70 +168,50 @@ def analyze_stock(stock_id, stock_name):
   if isinstance(df.columns, pd.MultiIndex):
     df.columns = df.columns.get_level_values(0)
 
-  # --- 取得基本面與股價資訊 (yfinance info + 備援) ---
+  # --- 取得現價 ---
   current_price = 'N/A'
+  price_val = None
+  if not df.empty and 'Close' in df.columns:
+    price_val = float(df['Close'].iloc[-1])
+    current_price = f'{price_val:.2f}'
+
+  # --- 強制透過 FinMind 取得真實 EPS ---
+  eps_val = get_finmind_eps_fallback(stock_id)
+
   eps_str = 'N/A'
   pe_str = 'N/A'
   dividend_str = 'N/A'
   yield_str = 'N/A'
   payout_str = 'N/A'
 
-  price_val = None
-  eps_val = None
-  div_val = 0.0
+  if eps_val is not None:
+    eps_str = f'{eps_val:.2f}'
+    if price_val and price_val > 0 and eps_val > 0:
+      calc_pe = price_val / eps_val
+      pe_str = f'{calc_pe:.2f}'
+  else:
+    eps_str = 'N/A'
 
+  # 試圖從 yfinance 補充配息資訊
+  div_val = 0.0
   try:
     ticker = yf.Ticker(symbol)
     info = ticker.info
-
-    # 1. 目前股價
-    price_val = info.get('regularMarketPrice') or info.get('currentPrice')
-    if not price_val and not df.empty:
-      price_val = df['Close'].iloc[-1]
-    if price_val:
-      current_price = f'{price_val:.2f}'
-
-    # 2. EPS (優先從 yfinance 抓取)
-    eps_val = info.get('trailingEps')
-
-    # 3. 本益比 (PE)
-    pe_val = info.get('trailingPE')
-    if pe_val is not None:
-      pe_str = f'{pe_val:.2f}'
-
-    # 4. 配息
     div_val = info.get('dividendRate') or info.get('lastDividendValue')
     if div_val is not None:
       dividend_str = f'{div_val:.2f}元'
     else:
       div_val = 0.0
 
-    # 5. 殖利率
     yield_val = info.get('dividendYield')
     if yield_val is not None and yield_val < 1:
       yield_str = f'{yield_val * 100:.2f}%'
     elif div_val > 0 and price_val and price_val > 0:
       calc_yield = (div_val / price_val) * 100
       yield_str = f'{calc_yield:.2f}%'
-    else:
-      yield_str = 'N/A'
-
-  except Exception:
+  except:
     pass
 
-  # **嚴格防呆與備援**：如果 yfinance 抓不到 EPS，改用 FinMind 補抓真實最近四季 EPS
-  if eps_val is None or eps_val == 0:
-    eps_val = get_finmind_eps_fallback(stock_id)
-
-  if eps_val is not None:
-    eps_str = f'{eps_val:.2f}'
-    if pe_str == 'N/A' and price_val and price_val > 0 and eps_val > 0:
-      calc_pe = price_val / eps_val
-      pe_str = f'{calc_pe:.2f}'
-  else:
-    eps_str = 'N/A'
-
-  # **強力自算配息率**
   if div_val and div_val > 0 and eps_val is not None and eps_val > 0:
     calc_payout = (div_val / eps_val) * 100
     payout_str = f'{calc_payout:.1f}%'
@@ -276,11 +255,17 @@ def analyze_stock(stock_id, stock_name):
   # --- 3. K值超賣區樣式處理 ---
   k_val_str = f'{latest_k:.2f} ({k_trend})'
   if latest_k <= 20:
-    k_val_str = f"<span style='color: #d9534f; font-weight: bold;'>{latest_k:.2f} ({k_trend}) 🔥 [超賣區]</span>"
+    k_val_str = (
+        f"<span style='color: #d9534f; font-weight:"
+        f" bold;'>{latest_k:.2f} ({k_trend}) 🔥 [超賣區]</span>"
+    )
 
   d_val_str = f'{latest_d:.2f} ({d_trend})'
   if latest_d <= 20:
-    d_val_str = f"<span style='color: #d9534f; font-weight: bold;'>{latest_d:.2f} ({d_trend}) 🔥 [超賣區]</span>"
+    d_val_str = (
+        f"<span style='color: #d9534f; font-weight:"
+        f" bold;'>{latest_d:.2f} ({d_trend}) 🔥 [超賣區]</span>"
+    )
 
   return {
       '代碼': stock_id,
