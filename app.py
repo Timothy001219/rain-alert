@@ -1,23 +1,37 @@
 from datetime import datetime, timedelta
-import os
-import sys
-from threading import Thread
 import pandas as pd
 import requests
-import urllib3
-from flask import Flask, render_template_string, request
+import streamlit as st
+import yfinance as yf
 
-# 匯入你的氣象輪詢主程式
-import rain
+# 網頁基本設定
+st.set_page_config(
+    page_title='台股技術與基本面快篩儀表板', page_icon='📈', layout='wide'
+)
 
-urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+st.title('📈 台股技術面與基本面快篩儀表板')
+st.markdown(
+    '結合 **yfinance (股價/EPS/本益比/殖利率)** 與 **Finmind (單月營收 YoY)**'
+    ' 的個人專屬工具！'
+)
+st.markdown('---')
 
-app = Flask(__name__)
+# --- 側邊欄設定 ---
+st.sidebar.header('⚙️ 查詢設定')
+
+default_stocks = '2330 台積電\n2317 鴻海\n2412 中華電\n5287 數字\n8422 可寧衛'
+stocks_input = st.sidebar.text_area(
+    '輸入股票清單 (代碼 名稱)', default_stocks, height=150
+)
+st.sidebar.markdown(
+    '_格式範例：代碼 空格 名稱，每行一檔股票。_'
+)
+
+run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
 
 
-# --- 股市分析相關函式 ---
+@st.cache_data(ttl=3600)
 def get_real_monthly_revenue(stock_id):
-  """取得單月營收與 YoY"""
   try:
     start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
     url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id={stock_id}&start_date={start_date}'
@@ -163,111 +177,57 @@ def analyze_stock(stock_id, stock_name):
   revenue_summary = get_real_monthly_revenue(stock_id)
 
   return {
-      'id': stock_id,
-      'name': stock_name,
-      'price': current_price,
-      'eps': eps_str,
-      'pe': pe_str,
-      'dividend': dividend_str,
-      'yield': yield_str,
-      'payout': payout_str,
-      'k': f'{latest_k:.2f} ({k_trend})',
-      'd': f'{latest_d:.2f} ({d_trend})',
-      'signal': signal,
-      'revenue': revenue_summary,
+      '代碼': stock_id,
+      '名稱': stock_name,
+      '現價': current_price,
+      'EPS': eps_str,
+      '本益比': pe_str,
+      '配息': dividend_str,
+      '殖利率': yield_str,
+      '配息率': payout_str,
+      'K值': f'{latest_k:.2f} ({k_trend})',
+      'D值': f'{latest_d:.2f} ({d_trend})',
+      '技術訊號': signal,
+      '近期營收摘要': revenue_summary,
   }
 
 
-# --- 網頁介面模板 ---
-HTML_TEMPLATE = """
-<!DOCTYPE html>
-<html lang="zh-TW">
-<head>
-    <meta charset="UTF-8">
-    <title>氣象監控與台股分析儀表板</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-</head>
-<body class="bg-light">
-    <div class="container py-5">
-        <h2 class="mb-2 text-center">🌦️ 氣象監控背景運行中</h2>
-        <p class="text-center text-muted mb-4">Status: Weather Monitor is Running! | 同步提供台股財報與技術面快篩</p>
-        
-        <div class="card shadow-sm mb-4">
-            <div class="card-body">
-                <form method="POST">
-                    <div class="mb-3">
-                        <label for="stocks" class="form-label">輸入台股清單 (代碼 名稱，每行一檔)：</label>
-                        <textarea class="form-control" id="stocks" name="stocks" rows="4">{{ stock_input }}</textarea>
-                    </div>
-                    <button type="submit" class="btn btn-primary">🚀 開始執行股市分析</button>
-                </form>
-            </div>
-        </div>
+if run_btn:
+  lines = stocks_input.strip().split('\n')
+  stock_list = []
+  for line in lines:
+    parts = line.replace(',', ' ').split()
+    if len(parts) >= 2:
+      stock_list.append((parts[0], parts[1]))
+    elif len(parts) == 1:
+      stock_list.append((parts[0], f'股票{parts[0]}'))
 
-        {% if results %}
-            <h4 class="mb-3">📊 分析結果</h4>
-            <div class="list-group">
-                {% for r in results %}
-                    <div class="list-group-item list-group-item-action mb-3 shadow-sm rounded">
-                        <div class="d-flex w-100 justify-content-between">
-                            <h5 class="mb-1 text-primary">{{ r.id }} {{ r.name }}</h5>
-                            <small class="text-muted">現價: <strong>{{ r.price }}</strong></small>
-                        </div>
-                        <p class="mb-1">
-                            💰 <strong>EPS:</strong> {{ r.eps }} | 
-                            <strong>本益比:</strong> {{ r.pe }} | 
-                            <strong>配息:</strong> {{ r.dividend }} | 
-                            <strong>殖利率:</strong> <span class="text-success">{{ r.yield }}</span> | 
-                            <strong>配息率:</strong> {{ r.payout }}
-                        </p>
-                        <p class="mb-1">
-                            📊 <strong>K值:</strong> {{ r.k }} | 
-                            <strong>D值:</strong> {{ r.d }} | 
-                            <strong>狀態:</strong> <strong>{{ r.signal }}</strong>
-                        </p>
-                        <small class="text-secondary">📈 營收: {{ r.revenue }}</small>
-                    </div>
-                {% endfor %}
-            </div>
-        {% endif %}
-    </div>
-</body>
-</html>
-"""
+  st.info(f'正在為您分析共計 {len(stock_list)} 檔股票，請稍候...')
 
-
-@app.route('/', methods=['GET', 'POST'])
-def home():
   results = []
-  stock_input = '2330 台積電\n2317 鴻海\n2412 中華電\n5287 數字\n8422 可寧衛'
+  progress_bar = st.progress(0)
+  for idx, (s_id, s_name) in enumerate(stock_list):
+    res = analyze_stock(s_id, s_name)
+    if res:
+      results.append(res)
+    progress_bar.progress((idx + 1) / len(stock_list))
 
-  if request.method == 'POST':
-    stock_input = request.form.get('stocks', '')
-    lines = stock_input.strip().split('\n')
-    for line in lines:
-      parts = line.replace(',', ' ').split()
-      if len(parts) >= 2:
-        res = analyze_stock(parts[0], parts[1])
-        if res:
-          results.append(res)
-      elif len(parts) == 1:
-        res = analyze_stock(parts[0], f'股票{parts[0]}')
-        if res:
-          results.append(res)
-
-  return render_template_string(
-      HTML_TEMPLATE, results=results, stock_input=stock_input
+  if results:
+    st.success('✅ 分析完畢！')
+    for r in results:
+      with st.container():
+        st.markdown(
+            f"""
+                #### {r['代碼']} {r['名稱']} (現價: {r['現價']})
+                - **💰 財務指標**: EPS: `{r['EPS']}` | 本益比: `{r['本益比']}` | 配息: `{r['配息']}` | 殖利率: `{r['殖利率']}` | 配息率: `{r['配息率']}`
+                - **📊 技術指標**: K值: `{r['K']}` | D值: `{r['D']}` | 狀態: **{r['技術訊號']}**
+                - **📈 營收趨勢**: {r['近期營收摘要']}
+                """
+        )
+        st.divider()
+  else:
+    st.warning('⚠️ 查無有效的股票資料，請檢查代碼是否正確。')
+else:
+  st.info(
+      '👈 請點擊左側邊欄的 **「開始執行批量分析」** 按鈕來載入數據！'
   )
-
-
-def run_web():
-  app.run(host='0.0.0.0', port=8080)
-
-
-if __name__ == '__main__':
-  # 1. 在背景啟動 Flask Web 服務 (維持雲端主機連線，並提供股市查詢網頁)
-  t = Thread(target=run_web)
-  t.start()
-
-  # 2. 執行原本的天氣輪詢監控程式
-  rain.main()
