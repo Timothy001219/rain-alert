@@ -9,9 +9,9 @@ st.set_page_config(
     page_title='台股技術與基本面快篩儀表板', page_icon='📈', layout='wide'
 )
 
-st.title('📈 台股技術與基本面快篩儀表板 (極速穩定版)')
+st.title('📈 台股技術與基本面快篩儀表板 (已內建 FinMind Token)')
 st.markdown(
-    '主力採用 **yfinance 歷史股價、技術指標** 與 **FinMind (單月營收)**，確保查詢流暢不卡關！'
+    '全面結合 **FinMind 專業財報與營收 API** 與 **yfinance 歷史股價與技術指標**，數據精準不漏勾！'
 )
 st.markdown('---')
 
@@ -28,10 +28,12 @@ default_stocks_text = (
 # --- 側邊欄設定 ---
 st.sidebar.header('⚙️ 查詢設定')
 
-# 若您有 FinMind Token 可在此輸入（選填）
+# 直接內建您的 FinMind Token
+DEFAULT_FM_TOKEN = (
+    'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoidGltb3RoeTEyMTlAZ21haWwuY29tIiwiZW1haWwiOiJ0aW1vdGh5MTIxOUBnbWFpbC5jb20iLCJ0b2tlbl92ZXJzaW9uIjowfQ.VJcdc7Igzgesc5YF_4cB-oC9grDE2Luvah2P9FiCp8E'
+)
 fm_token = st.sidebar.text_input(
-    'FinMind API Token (	
-eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoidGltb3RoeTEyMTlAZ21haWwuY29tIiwiZW1haWwiOiJ0aW1vdGh5MTIxOUBnbWFpbC5jb20iLCJ0b2tlbl92ZXJzaW9uIjowfQ.VJcdc7Igzgesc5YF_4cB-oC9grDE2Luvah2P9FiCp8E)', type='password'
+    'FinMind API Token (已自動填入)', value=DEFAULT_FM_TOKEN, type='password'
 )
 
 uploaded_file = st.sidebar.file_uploader(
