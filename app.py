@@ -9,9 +9,9 @@ st.set_page_config(
     page_title='台股技術與基本面快篩儀表板', page_icon='📈', layout='wide'
 )
 
-st.title('📈 台股技術與基本面快篩儀表板 (FinMind 專業數據版)')
+st.title('📈 台股技術與基本面快篩儀表板 (完整精準實時數據)')
 st.markdown(
-    '結合 **FinMind (單月營收、本益比、殖利率)** 與 **yfinance (歷史股價與 KD 技術指標)**，數據完美對齊！'
+    '完美結合 **FinMind 專業財報、本益比與營收 API** 與 **yfinance 歷史股價與技術指標**！'
 )
 st.markdown('---')
 
@@ -28,10 +28,6 @@ default_stocks_text = (
 # --- 側邊欄設定 ---
 st.sidebar.header('⚙️ 查詢設定')
 
-DEFAULT_FM_TOKEN = (
-    'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoidGltb3RoeTEyMTl@gmail.com","email":"timothy1219@gmail.com","token_version":0}'
-)
-# 修正 Token 字串格式確保乾淨
 DEFAULT_FM_TOKEN = (
     'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoidGltb3RoeTEyMTlAZ21haWwuY29tIiwiZW1haWwiOiJ0aW1vdGh5MTIxOUBnbWFpbC5jb20iLCJ0b2tlbl92ZXJzaW9uIjowfQ.VJcdc7Igzgesc5YF_4cB-oC9grDE2Luvah2P9FiCp8E'
 )
@@ -65,10 +61,10 @@ run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
 
 @st.cache_data(ttl=3600)
 def get_finmind_per_and_dividend(stock_id, token):
-  """透過 FinMind 取得本益比、殖利率與近況資料"""
-  pe_val, yield_val, eps_val = None, None, None
+  """透過 FinMind 取得本益比、殖利率與配息資料"""
+  pe_val, yield_val, div_val = None, None, None
   try:
-    start_date = (datetime.now() - timedelta(days=15)).strftime('%Y-%m-%d')
+    start_date = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d')
     url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPER&data_id={stock_id}&start_date={start_date}'
     if token:
       url += f'&token={token}'
@@ -79,17 +75,63 @@ def get_finmind_per_and_dividend(stock_id, token):
       if 'data' in data and len(data['data']) > 0:
         df = pd.DataFrame(data['data'])
         latest = df.iloc[-1]
-        if 'PE' in latest and pd.notna(latest['PE']):
-          pe_val = float(latest['PE'])
-        if 'dividend_yield' in latest and pd.notna(
-            latest['dividend_yield']
-        ):
-          # FinMind 的殖利率通常為小數 (例如 0.05 代表 5%) 或已經是百分比
-          dy = float(latest['dividend_yield'])
-          yield_val = dy * 100 if dy < 1 else dy
+
+        # 尋找本益比欄位
+        for col in ['PE', 'price_earning_ratio']:
+          if col in latest and pd.notna(latest[col]):
+            val = float(latest[col])
+            if val > 0:
+              pe_val = val
+              break
+
+        # 尋找殖利率欄位
+        for col in ['dividend_yield', 'DividendYield']:
+          if col in latest and pd.notna(latest[col]):
+            dy = float(latest[col])
+            yield_val = dy * 100 if dy < 1 else dy
+            break
   except:
     pass
-  return pe_val, yield_val
+
+  # 另外從股利政策補抓現金股利金額
+  try:
+    start_div_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
+    url_div = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDividend&data_id={stock_id}&start_date={start_div_date}'
+    if token:
+      url_div += f'&token={token}'
+
+    res_div = requests.get(url_div, timeout=5)
+    if res_div.status_code == 200:
+      data_div = res_div.json()
+      if 'data' in data_div and len(data_div['data']) > 0:
+        df_div = pd.DataFrame(data_div['data'])
+        if 'type' in df_div.columns:
+          df_cash = df_div[
+              df_div['type'].str.contains('Cash|現金', case=False, na=False)
+          ]
+        else:
+          df_cash = df_div
+
+        if not df_cash.empty:
+          df_cash['date'] = pd.to_datetime(df_cash['date'])
+          df_cash = df_cash.sort_values('date', ascending=False)
+          latest_year = df_cash['date'].dt.year.iloc[0]
+          df_latest = df_cash[df_cash['date'].dt.year == latest_year]
+          col_name = (
+              'stock_dividend'
+              if 'stock_dividend' in df_latest.columns
+              else 'value'
+          )
+          if col_name in df_latest.columns:
+            total_div = pd.to_numeric(
+                df_latest[col_name], errors='coerce'
+            ).sum()
+            if total_div > 0:
+              div_val = float(total_div)
+  except:
+    pass
+
+  return pe_val, yield_val, div_val
 
 
 @st.cache_data(ttl=3600)
@@ -175,18 +217,21 @@ def analyze_stock(stock_id, stock_name, token):
     price_val = float(df['Close'].iloc[-1])
     current_price = f'{price_val:.2f}'
 
-  # --- 從 FinMind 取得本益比與殖利率 ---
-  pe_val, yield_val = get_finmind_per_and_dividend(stock_id, token)
+  # --- 從 FinMind 取得本益比、殖利率與配息 ---
+  pe_val, yield_val, div_val = get_finmind_per_and_dividend(stock_id, token)
+
+  # 若配息有抓到但殖利率沒抓到，用現價回推殖利率
+  if div_val and not yield_val and price_val and price_val > 0:
+    yield_val = (div_val / price_val) * 100
+
+  # 若殖利率有抓到但配息沒抓到，用現價回推配息
+  if yield_val and not div_val and price_val and price_val > 0:
+    div_val = price_val * (yield_val / 100)
 
   # 試算 EPS = 現價 / 本益比
   eps_val = None
   if price_val and pe_val and pe_val > 0:
     eps_val = price_val / pe_val
-
-  # 試算配息 = 現價 * 殖利率
-  div_val = None
-  if price_val and yield_val and yield_val > 0:
-    div_val = price_val * (yield_val / 100)
 
   # 整理基本面字串
   eps_str = f'{eps_val:.2f}' if eps_val else 'N/A'
