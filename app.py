@@ -672,6 +672,30 @@ if run_btn:
         st.success(f"✅ 分析完成：成功 {len(results)} 檔")
 
         for r in results:
+            # 1. 檢查 K 值小於 20 放大
+            k_raw_str = r["k"].split(" ")[0]
+            try:
+                k_num = float(k_raw_str)
+            except ValueError:
+                k_num = 50.0
+
+            if k_num < 20:
+                k_display = f"<span style='font-size: 20px; font-weight: bold; color: #FF4B4B;'>{r['k']} (🔥超跌)</span>"
+            else:
+                k_display = f"`{r['k']}`"
+
+            # 2. 檢查殖利率大於 4.5% 放大
+            yield_str_raw = r["殖利率"].replace("%", "")
+            try:
+                yield_num = float(yield_str_raw)
+            except ValueError:
+                yield_num = 0.0
+
+            if yield_num > 4.5:
+                yield_display = f"<span style='font-size: 20px; font-weight: bold; color: #09AB3B;'>{r['殖利率']} (💰高殖利率)</span>"
+            else:
+                yield_display = f"`{r['殖利率']}`"
+
             with st.container():
                 st.markdown(
                     f"""
@@ -682,12 +706,12 @@ if run_btn:
 EPS：`{r['EPS']}` ｜ 
 本益比：`{r['本益比']}` ｜ 
 配息：`{r['配息']}` ｜ 
-殖利率：`{r['殖利率']}` ｜ 
+殖利率：{yield_display} ｜ 
 配息率：`{r['配息率']}`
 
 **📊 技術指標**
 
-K 值：`{r['k']}` ｜ 
+K 值：{k_display} ｜ 
 D 值：`{r['d']}` ｜ 
 狀態：**{r['技術訊號']}**
 
@@ -698,7 +722,8 @@ D 值：`{r['d']}` ｜
 資料筆數：`{r['資料筆數']}` ｜ 
 配息年度：`{r['配息年度']}` ｜ 
 EPS 來源：`{r['EPS備援']}`
-"""
+""",
+                    unsafe_allow_html=True,
                 )
                 st.divider()
     else:
