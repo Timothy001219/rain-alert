@@ -9,9 +9,10 @@ st.set_page_config(
     page_title='台股技術與基本面快篩儀表板', page_icon='📈', layout='wide'
 )
 
-st.title('📈 台股技術面與基本面快篩儀表板 (含營收動態估算配息)')
+st.title('📈 台股技術面與基本面快篩儀表板 (EPS 成長動態推估模型)')
 st.markdown(
-    '結合 **yfinance (技術指標)**、**Finmind (累計營收 YoY)** 與 **智慧配息估算模型**！'
+    '結合 **yfinance (技術指標)**、**Finmind (營收 YoY 與 EPS)** 與 **「累計營收 80% 估算 EPS $\rightarrow$ 配息率推估殖利率」**'
+    ' 模組！'
 )
 st.markdown('---')
 
@@ -91,7 +92,6 @@ def get_finmind_eps(stock_id):
 
 @st.cache_data(ttl=3600)
 def get_real_monthly_revenue_and_acc_yoy(stock_id):
-  """取得近期營收文字摘要，並同時回傳最新一筆的「累計營收 YoY」數值供估算使用"""
   try:
     start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
     url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id={stock_id}&start_date={start_date}'
@@ -213,10 +213,9 @@ def analyze_stock(stock_id, stock_name):
   if eps_val is not None:
     eps_str = f'{eps_val:.2f}'
 
-  # 取得營收摘要與最新累計 YoY
   revenue_summary, acc_yoy = get_real_monthly_revenue_and_acc_yoy(stock_id)
 
-  # 配息基準與預估模型
+  # 配息基準與歷史配息率參考表 (預設配息率約 80%~90%)
   dividend_str, yield_str, payout_str = 'N/A', 'N/A', 'N/A'
   div_val = None
   fallback_dividends = {
@@ -253,12 +252,21 @@ def analyze_stock(stock_id, stock_name):
   except:
     pass
 
-  # 🌟 核心估算：以累計營收成長率的 80% 來估算未來配息與殖利率
-  if div_val is not None and div_val > 0:
-    estimated_div = div_val * (1 + (acc_yoy / 100.0) * 0.8)
+  # 🌟 核心新模型：累計營收成長率 80% 估算未來 EPS $\rightarrow$ 透過配息率推估未來配息與殖利率
+  if eps_val is not None and eps_val > 0 and div_val is not None:
+    # 1. 計算歷史配息率 (現金股利 / EPS)
+    historical_payout_ratio = div_val / eps_val
+
+    # 2. 以累計營收成長率的 80% 估算未來 EPS
+    estimated_eps = eps_val * (1 + (acc_yoy / 100.0) * 0.8)
+
+    # 3. 透過預估 EPS 與歷史配息率推估未來配息
+    estimated_div = estimated_eps * historical_payout_ratio
+
     dividend_str = (
-        f'{div_val:.2f}元 (估算未來: <span'
-        f" style='color: #2e7d32; font-weight: bold;'>{estimated_div:.2f}元</span>)"
+        f'{div_val:.2f}元 (預估EPS: {estimated_eps:.2f} $\rightarrow$ 預估配息:'
+        f" <span style='color: #2e7d32; font-weight:"
+        f" bold;'>{estimated_div:.2f}元</span>)"
     )
 
     if price_val and price_val > 0:
@@ -268,9 +276,7 @@ def analyze_stock(stock_id, stock_name):
           f" bold;'>{est_yield:.2f}%</span>"
       )
 
-    if eps_val is not None and eps_val > 0:
-      p_rate = (estimated_div / eps_val) * 100
-      payout_str = f'{p_rate:.1f}%'
+    payout_str = f'{historical_payout_ratio * 100:.1f}%'
 
   if price_val and eps_val is not None:
     try:
@@ -364,7 +370,7 @@ if run_btn:
         st.markdown(
             f"""
                 #### {r['代碼']} {r['名稱']} (現價: {r['現價']})
-                - **💰 財務指標**: EPS: `{r['EPS']}` | 本益比: `{r['本益比']}` | 配息: {r['dividend']} | 預估殖利率: {r['殖利率']} | 預估配息率: `{r['配息率']}`
+                - **💰 財務指標**: EPS: `{r['EPS']}` | 本益比: `{r['本益比']}` | 配息: {r['dividend']} | 預估殖利率: {r['殖利率']} | 配息率: `{r['配息率']}`
                 - **📊 技術指標**: K值: {r['k']} | D值: {r['d']} | 狀態: **{r['技術訊號']}**
                 - **📈 營收數據 (單月與累計 YoY):**<br>{r['近期營收摘要']}
                 """,
