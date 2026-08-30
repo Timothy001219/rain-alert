@@ -9,8 +9,10 @@ st.set_page_config(
     page_title='台股技術與基本面快篩儀表板', page_icon='📈', layout='wide'
 )
 
-st.title('📈 台股技術與基本面快篩儀表板 (全完美點亮版)')
-st.markdown('結合專業財報、技術指標與智慧備援，讓所有數據完美呈現！')
+st.title('📈 台股技術與基本面快篩儀表板 (三效合一完美終極版)')
+st.markdown(
+    '結合 **FinMind 專業財報與營收** 與 **yfinance 歷史數據與智慧備援**，讓所有欄位全面點亮！'
+)
 st.markdown('---')
 
 # --- 預設股票清單 ---
@@ -27,7 +29,7 @@ default_stocks_text = (
 st.sidebar.header('⚙️ 查詢設定')
 
 DEFAULT_FM_TOKEN = (
-    'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoidGltb3RoeTEyMTl@Z21haWwuY29tIiwiZW1haWwiOiJ0aW1vdGh5MTIxOUBnbWFpbC5jb20iLCJ0b2tlbl92ZXJzaW9uIjowfQ.VJcdc7Igzgesc5YF_4cB-oC9grDE2Luvah2P9FiCp8E'
+    'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoidGltb3RoeTEyMTlAZ21haWwuY29tIiwiZW1haWwiOiJ0aW1vdGh5MTIxOUBnbWFpbC5jb20iLCJ0b2tlbl92ZXJzaW9uIjowfQ.VJcdc7Igzgesc5YF_4cB-oC9grDE2Luvah2P9FiCp8E'
 )
 
 fm_token = st.sidebar.text_input(
@@ -215,48 +217,36 @@ def analyze_stock(stock_id, stock_name, token):
     price_val = float(df['Close'].iloc[-1])
     current_price = f'{price_val:.2f}'
 
-  # --- 從 FinMind 取得本益比、殖利率與配息 ---
+  # --- 1. 從 FinMind 取得本益比、殖利率與配息 ---
   pe_val, yield_val, div_val = get_finmind_per_and_dividend(stock_id, token)
 
-  # 若 FinMind 漏掉本益比，用 yfinance 備援
-  if not pe_val or pe_val <= 0:
-    try:
-      info = ticker_obj.info
-      yf_pe = info.get('trailingPE')
-      if yf_pe and yf_pe > 0:
-        pe_val = float(yf_pe)
-    except:
-      pass
-
-  # 若配息有抓到但殖利率沒抓到，用現價回推
-  if div_val and not yield_val and price_val and price_val > 0:
-    yield_val = (div_val / price_val) * 100
-
-  # 若殖利率有抓到但配息沒抓到，用現價回推
-  if yield_val and not div_val and price_val and price_val > 0:
-    div_val = price_val * (yield_val / 100)
-
-  # 嘗試取得 EPS
+  # --- 2. 從 yfinance 取得 EPS 與備援本益比 ---
   eps_val = None
   try:
     info = ticker_obj.info
     yf_eps = info.get('trailingEps')
     if yf_eps and yf_eps > 0:
       eps_val = float(yf_eps)
+
+    if not pe_val or pe_val <= 0:
+      yf_pe = info.get('trailingPE')
+      if yf_pe and yf_pe > 0:
+        pe_val = float(yf_pe)
   except:
     pass
 
-  # 交叉互推邏輯
-  if not eps_val and price_val and pe_val and pe_val > 0:
-    eps_val = price_val / pe_val
-
+  # --- 3. 交叉互推邏輯確保資料完整 ---
   if not pe_val and price_val and eps_val and eps_val > 0:
     pe_val = price_val / eps_val
 
-  # 針對特殊個股（如可寧衛、崑鼎）若仍缺本益比，給予合理的產業平均預設本益比或從殖利率反推防線
-  if (not pe_val or pe_val <= 0) and yield_val and yield_val > 0:
-    # 假設本益比約略可用 100 / 殖利率 作為粗估參考，或給予預設值
-    pass
+  if not eps_val and price_val and pe_val and pe_val > 0:
+    eps_val = price_val / pe_val
+
+  if div_val and not yield_val and price_val and price_val > 0:
+    yield_val = (div_val / price_val) * 100
+
+  if yield_val and not div_val and price_val and price_val > 0:
+    div_val = price_val * (yield_val / 100)
 
   # 整理基本面字串
   eps_str = f'{eps_val:.2f}' if eps_val else 'N/A'
@@ -268,7 +258,7 @@ def analyze_stock(stock_id, stock_name, token):
   if div_val and eps_val and eps_val > 0:
     payout_str = f'{(div_val / eps_val) * 100:.1f}%'
 
-  # --- 1. 計算 KD 值 ---
+  # --- 4. 計算 KD 值 ---
   n = 9
   lowest_low = df['Low'].rolling(window=n).min()
   highest_high = df['High'].rolling(window=n).max()
@@ -301,7 +291,7 @@ def analyze_stock(stock_id, stock_name, token):
   else:
     signal = '多頭' if latest_k > latest_d else '空頭'
 
-  # --- 2. 取得單月營收 ---
+  # --- 5. 取得單月營收 ---
   monthly_rev_str = get_real_monthly_revenue(stock_id, token)
 
   k_val_str = (
