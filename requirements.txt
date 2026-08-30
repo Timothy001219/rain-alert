@@ -1,3 +1,5 @@
+Flask
 requests
 urllib3
-flask
+pandas
+yfinance
