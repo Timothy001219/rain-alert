@@ -9,9 +9,9 @@ st.set_page_config(
     page_title='台股技術與基本面快篩儀表板', page_icon='📈', layout='wide'
 )
 
-st.title('📈 台股技術與基本面快篩儀表板 (終極全亮版)')
+st.title('📈 台股技術與基本面快篩儀表板 (TTM 財報計算版)')
 st.markdown(
-    '結合專業財報、營收 YoY、技術指標與多重備援，讓所有數據毫無遺漏完美呈現！'
+    '結合自算 TTM 財務指標、營收 YoY、技術指標與多重備援，數據更扎實、拒絕盲目猜測！'
 )
 st.markdown('---')
 
@@ -29,7 +29,7 @@ default_stocks_text = (
 st.sidebar.header('⚙️ 查詢設定')
 
 DEFAULT_FM_TOKEN = (
-    'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoidGltb3RoeTEyMTlAZ21haWwuY29tIiwiZW1haWwiOiJ0aW1vdGh5MTIxOUBnbWFpbC5jb20iLCJ0b2tlbl92ZXJzaW9uIjowfQ.VJcdc7Igzgesc5YF_4cB-oC9grDE2Luvah2P9FiCp8E'
+    'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoidGltb3hoyTEyMTlAZ21haWwuY29tIiwiZW1haWwiOiJ0aW1vdGh5MTIxOUBnbYWpbC5jb20iLCJ0b2tlbl92ZXJzaW9uIjowfQ.VJcdc7Igzgesc5YF_4cB-oC9grDE2Luvah2P9FiCp8E'
 )
 
 fm_token = st.sidebar.text_input(
@@ -60,7 +60,7 @@ run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
 
 
 @st.cache_data(ttl=3600)
-def get_finmind_per_and_dividend(stock_id, token):
+def get_finmind_market_data(stock_id, token):
   """透過 FinMind 取得本益比、殖利率與配息資料"""
   pe_val, yield_val, div_val = None, None, None
   try:
@@ -130,6 +130,66 @@ def get_finmind_per_and_dividend(stock_id, token):
     pass
 
   return pe_val, yield_val, div_val
+
+
+@st.cache_data(ttl=3600)
+def get_finmind_ttm_eps(stock_id, token):
+  """透過 FinMind 綜合損益表抓取最近四季的淨利與股數自行加總計算 TTM EPS"""
+  try:
+    start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
+    url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}'
+    if token:
+      url += f'&token={token}'
+
+    res = requests.get(url, timeout=6)
+    if res.status_code == 200:
+      data = res.json()
+      if 'data' in data and len(data['data']) > 0:
+        df = pd.DataFrame(data['data'])
+
+        # 常見的淨利欄位名稱過濾
+        net_profit_col = None
+        for col in [
+            'NetIncome',
+            'net_income',
+            '本期淨利（淨損）',
+            '歸屬於母公司業主之淨利（淨損）',
+        ]:
+          if col in df.columns:
+            net_profit_col = col
+            break
+
+        if net_profit_col and 'date' in df.columns:
+          df['date'] = pd.to_datetime(df['date'])
+          df = df.sort_values('date', ascending=False)
+
+          # 取最近 4 個季度
+          recent_4q = df.head(4)
+          if len(recent_4q) >= 4:
+            total_net_income = pd.to_numeric(
+                recent_4q[net_profit_col], errors='coerce'
+            ).sum()
+
+            # 嘗試尋找加權平均股數
+            shares = None
+            for s_col in [
+                'WeightedAverageSharesOustanding',
+                'weighted_average_shares',
+                '普通股加權平均股數',
+            ]:
+              if s_col in recent_4q.columns:
+                shares = pd.to_numeric(
+                    recent_4q[s_col], errors='coerce'
+                ).iloc[0]
+                break
+
+            if shares and shares > 0:
+              ttm_eps = total_net_income / shares
+              if ttm_eps > -100:  # 合理防呆範圍
+                return float(ttm_eps)
+  except:
+    pass
+  return None
 
 
 @st.cache_data(ttl=3600)
@@ -218,45 +278,39 @@ def analyze_stock(stock_id, stock_name, token):
     current_price = f'{price_val:.2f}'
 
   # --- 1. 從 FinMind 取得本益比、殖利率與配息 ---
-  pe_val, yield_val, div_val = get_finmind_per_and_dividend(stock_id, token)
+  pe_val, yield_val, div_val = get_finmind_market_data(stock_id, token)
 
-  # --- 2. 從 yfinance 取得 EPS 與備援本益比 ---
-  eps_val = None
-  try:
-    info = ticker_obj.info
-    for eps_key in ['trailingEps', 'epsTrailingTwelveMonths', 'forwardEps']:
-      yf_eps = info.get(eps_key)
-      if yf_eps and yf_eps > 0:
-        eps_val = float(yf_eps)
-        break
+  # --- 2. 優先使用自行計算的 TTM EPS，若無則向 yfinance 備援 ---
+  eps_val = get_finmind_ttm_eps(stock_id, token)
 
-    if not pe_val or pe_val <= 0:
-      yf_pe = info.get('trailingPE')
-      if yf_pe and yf_pe > 0:
-        pe_val = float(yf_pe)
-  except:
-    pass
+  if not eps_val:
+    try:
+      info = ticker_obj.info
+      for eps_key in ['trailingEps', 'epsTrailingTwelveMonths', 'forwardEps']:
+        yf_eps = info.get(eps_key)
+        if yf_eps and yf_eps > -50:
+          eps_val = float(yf_eps)
+          break
 
-  # --- 3. 智慧交叉互推與預設防線 ---
+      if not pe_val or pe_val <= 0:
+        yf_pe = info.get('trailingPE')
+        if yf_pe and yf_pe > 0:
+          pe_val = float(yf_pe)
+    except:
+      pass
+
+  # --- 3. 嚴謹互推（完全移除 75% 假設，無資料則維持 N/A） ---
   if not yield_val and div_val and price_val and price_val > 0:
     yield_val = (div_val / price_val) * 100
 
   if not div_val and yield_val and price_val and price_val > 0:
     div_val = price_val * (yield_val / 100)
 
-  # 若已知配息與殖利率，可用 現價 / 殖利率 推算合理 EPS 或本益比
-  if not eps_val and div_val and yield_val and yield_val > 0:
-    # 假設多數定存股/權值股配發率約 75% 左右來反推約略 EPS
-    eps_val = div_val / 0.75
-
   if not pe_val and price_val and eps_val and eps_val > 0:
     pe_val = price_val / eps_val
 
-  if not eps_val and price_val and pe_val and pe_val > 0:
-    eps_val = price_val / pe_val
-
   # 整理基本面字串
-  eps_str = f'{eps_val:.2f}' if eps_val else 'N/A'
+  eps_str = f'{eps_val:.2f}' if eps_val is not None else 'N/A'
   pe_str = f'{pe_val:.2f}' if pe_val and pe_val > 0 else 'N/A'
   dividend_str = f'{div_val:.2f}元' if div_val else 'N/A'
   yield_str = f'{yield_val:.2f}%' if yield_val else 'N/A'
@@ -342,7 +396,7 @@ if run_btn:
     elif len(parts) == 1:
       stock_list.append((parts[0], f'股票{parts[0]}'))
 
-  st.info(f'正在為您分析共計 {len(stock_list)} 檔股票，請稍候...')
+  st.info(f'正在為您分析共計 {len(stock_list)} 檔股票（啟用 TTM 財報計算），請稍候...')
 
   results = []
   progress_bar = st.progress(0)
