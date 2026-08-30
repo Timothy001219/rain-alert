@@ -64,11 +64,11 @@ def get_real_monthly_revenue(stock_id):
                   * 100
               )
               yoy_str = f'{yoy:+.2f}%'
-          rev_texts.append(
+           rev_texts.append(
               f'{curr_date.strftime("%Y年")}{m_str}: 今年 {curr_rev:.2f}億 | 去年'
               f' {ly_str} | YoY: {yoy_str}'
           )
-        return ' | '.join(rev_texts)
+        return '<br>'.join(rev_texts)
     return '查無近期營收'
   except:
     return '營收取得略過'
