@@ -16,10 +16,8 @@ st.markdown(
 )
 st.markdown('---')
 
-# --- 側邊欄設定 ---
-st.sidebar.header('⚙️ 查詢設定')
-
-default_stocks = (
+# --- 預設股票清單 ---
+default_stocks_text = (
     '8422 可寧衛\n6803 崑鼎\n8341 日友\n6951 青新\n1216 統一\n2912'
     ' 統一超\n8462 柏文\n2762 世界健身\n5287 數字\n3130 一零四\n9917'
     ' 中保科\n9925 新保\n2412 中華電\n3045 台灣大\n4904 遠傳\n5904 寶雅\n2330'
@@ -27,11 +25,35 @@ default_stocks = (
     ' 全家\n0050 台灣50\n6887 寶特綠\n9933 中鼎\n2317 鴻海\n2884 玉山金\n1802'
     ' 台玻\n8390 金益鼎\n2891 中信金'
 )
+
+# --- 側邊欄設定 ---
+st.sidebar.header('⚙️ 查詢設定')
+
+# 1. 檔案上傳元件
+uploaded_file = st.sidebar.file_uploader(
+    '📂 上傳自選股檔案 (格式: 代碼 空格 名稱)', type=['txt', 'csv']
+)
+
+# 2. 文字輸入框 (預設帶入預設清單或從檔案讀取)
+if uploaded_file is not None:
+  try:
+    # 讀取上傳的檔案內容並轉為字串
+    file_bytes = uploaded_file.getvalue()
+    # 嘗試用 utf-8 或 big5 解碼（避免中文亂碼）
+    try:
+      file_text = file_bytes.decode('utf-8')
+    except:
+      file_text = file_bytes.decode('big5')
+    default_stocks_text = file_text
+    st.sidebar.success('✅ 成功讀取您上傳的股票清單！')
+  except Exception as e:
+    st.sidebar.error(f'⚠️ 檔案讀取失敗: {e}')
+
 stocks_input = st.sidebar.text_area(
-    '輸入股票清單 (代碼 名稱)', default_stocks, height=250
+    '股票清單預覽與編輯 (每行一檔)', default_stocks_text, height=250
 )
 st.sidebar.markdown(
-    '_格式範例：代碼 空格 名稱，每行一檔股票。_'
+    '_格式範例：代碼 空格 名稱，可直接在上方修改。_'
 )
 
 run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
@@ -246,5 +268,6 @@ if run_btn:
     st.warning('⚠️ 查無有效的股票資料，請檢查代碼是否正確。')
 else:
   st.info(
-      '👈 請點擊左側邊欄的 **「開始執行批量分析」** 按鈕來載入數據！'
+      '👈 請從左側邊欄 **上傳檔案** 或直接點擊 **「開始執行批量分析」**'
+      ' 來載入數據！'
   )
