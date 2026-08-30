@@ -9,9 +9,9 @@ st.set_page_config(
     page_title='台股技術與基本面快篩儀表板', page_icon='📈', layout='wide'
 )
 
-st.title('📈 台股技術與基本面快篩儀表板 (網頁版精準實時數據)')
+st.title('📈 台股技術與基本面快篩儀表板 (臺灣本土官方/開源數據主力)')
 st.markdown(
-    '結合 **yfinance 歷史股價與精準 EPS** 與 **FinMind (單月營收)**，確保財務數據乾淨正確！'
+    '全面採用 **FinMind 專業財報與股利 API** 結合 **yfinance 歷史股價與技術指標**，數據精準不漏勾！'
 )
 st.markdown('---')
 
@@ -55,8 +55,109 @@ run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
 
 
 @st.cache_data(ttl=3600)
+def get_finmind_fundamentals(stock_id):
+  """透過 FinMind 官方財報 API 計算最近四季真實 EPS 及本益比/殖利率"""
+  eps_sum = None
+  pe_val = None
+  div_val = 0.0
+
+  start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
+
+  # 1. 抓取財報計算最近四季 EPS
+  try:
+    url_fin = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}'
+    res = requests.get(url_fin, timeout=5)
+    if res.status_code == 200:
+      data = res.json()
+      if 'data' in data and len(data['data']) > 0:
+        df_fin = pd.DataFrame(data['data'])
+        # 篩選每股盈餘相關項目 (包含英文代號與中文名稱)
+        mask = df_fin['type'].isin(
+            ['BasicEarningsPerShare', 'EPS', 'earnings_per_share', '1.07']
+        ) | df_fin['origin_common_name'].str.contains(
+            '基本每股盈餘|每股盈餘|EPS', case=False, na=False
+        )
+        df_eps = df_fin[mask].copy()
+        if not df_eps.empty:
+          df_eps['date'] = pd.to_datetime(df_eps['date'])
+          df_eps = df_eps.sort_values('date', ascending=False)
+          df_eps['value'] = pd.to_numeric(df_eps['value'], errors='coerce')
+          df_eps = df_eps.dropna(subset=['value']).drop_duplicates(
+              subset=['date']
+          )
+
+          recent_4q = df_eps.head(4)
+          if len(recent_4q) >= 4:
+            total = recent_4q['value'].sum()
+            if -50 < total < 300:  # 合理 EPS 區間防呆
+              eps_sum = float(total)
+  except:
+    pass
+
+  # 2. 抓取 FinMind 本益比與殖利率資料集 (TaiwanStockPER)
+  try:
+    url_per = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPER&data_id={stock_id}&start_date={(datetime.now() - timedelta(days=10)).strftime("%Y-%m-%d")}'
+    res_per = requests.get(url_per, timeout=5)
+    if res_per.status_code == 200:
+      data_per = res_per.json()
+      if 'data' in data_per and len(data_per['data']) > 0:
+        df_per = pd.DataFrame(data_per['data'])
+        if not df_per.empty:
+          latest_row = df_per.iloc[-1]
+          if 'PE' in latest_row and pd.notna(latest_row['PE']):
+            pe_val = float(latest_row['PE'])
+          if 'dividend_yield' in latest_row and pd.notna(
+              latest_row['dividend_yield']
+          ):
+            # 某些版本單位為百分比或小數
+            dy = float(latest_row['dividend_yield'])
+            if dy > 1:
+              pass  # 已經是百分比
+  except:
+    pass
+
+  # 3. 抓取 FinMind 股利政策 (TaiwanStockDividend)
+  try:
+    url_div = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDividend&data_id={stock_id}&start_date={start_date}'
+    res_div = requests.get(url_div, timeout=5)
+    if res_div.status_code == 200:
+      data_div = res_div.json()
+      if 'data' in data_div and len(data_div['data']) > 0:
+        df_div = pd.DataFrame(data_div['data'])
+        # 篩選現金股利
+        if 'type' in df_div.columns:
+          df_cash = df_div[
+              df_div['type'].str.contains('Cash|現金', case=False, na=False)
+          ]
+        else:
+          df_cash = df_div
+
+        if not df_cash.empty:
+          df_cash['date'] = pd.to_datetime(df_cash['date'])
+          df_cash = df_cash.sort_values('date', ascending=False)
+          latest_year = df_cash['date'].dt.year.iloc[0]
+          df_latest = df_cash[df_cash['date'].dt.year == latest_year]
+
+          col_name = (
+              'stock_dividend'
+              if 'stock_dividend' in df_latest.columns
+              else 'value'
+          )
+          if col_name in df_latest.columns:
+            total_div = pd.to_numeric(
+                df_latest[col_name], errors='coerce'
+            ).sum()
+            if total_div > 0:
+              div_val = float(total_div)
+  except:
+    pass
+
+  return eps_sum, pe_val, div_val
+
+
+@st.cache_data(ttl=3600)
 def get_real_monthly_revenue(stock_id):
-  """同時取得今年與去年同期的單月營收，並計算 YoY"""
+  """透過 FinMind 取得今年與去年同期的單月營收並計算 YoY"""
   try:
     start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
     url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id={stock_id}&start_date={start_date}'
@@ -109,7 +210,6 @@ def get_real_monthly_revenue(stock_id):
 
 def analyze_stock(stock_id, stock_name):
   stock_id = stock_id.strip()
-  symbol = None
   df = pd.DataFrame()
 
   candidates = [f'{stock_id}.TW', f'{stock_id}.TWO']
@@ -119,7 +219,6 @@ def analyze_stock(stock_id, stock_name):
       temp_df = yf.download(cand, period='6mo', interval='1d', progress=False)
       if not temp_df.empty:
         df = temp_df
-        symbol = cand
         break
     except:
       continue
@@ -137,53 +236,8 @@ def analyze_stock(stock_id, stock_name):
     price_val = float(df['Close'].iloc[-1])
     current_price = f'{price_val:.2f}'
 
-  eps_val = None
-  div_val = 0.0
-  pe_val = None
-
-  # --- 透過 yfinance 抓取財務基本面 ---
-  try:
-    ticker = yf.Ticker(symbol)
-    info = ticker.info
-
-    # 1. 取得 EPS
-    eps_val = info.get('trailingEps')
-    if eps_val is None or eps_val == 0 or abs(eps_val) > 1000:
-      financials = ticker.quarterly_financials
-      if financials is not None and not financials.empty:
-        # 嚴格過濾真實 EPS 欄位，排除淨利總額
-        for col_name in ['Basic EPS', 'Diluted EPS']:
-          if col_name in financials.index:
-            eps_row = financials.loc[col_name]
-            valid_eps = eps_row.dropna()
-            if len(valid_eps) >= 4:
-              val_sum = float(valid_eps.head(4).sum())
-              # 確保加總後的 EPS 在合理範圍內 (例如 -50 到 200 之間)
-              if -50 < val_sum < 300:
-                eps_val = val_sum
-                break
-
-    # 若 EPS 異常大（超過合理範圍），直接歸零或設為 N/A
-    if eps_val is not None and (eps_val > 500 or eps_val < -100):
-      eps_val = None
-
-    # 2. 取得本益比
-    pe_val = info.get('trailingPE')
-
-    # 3. 取得配息（直接從歷史股利加總過去一年）
-    divs = ticker.dividends
-    if divs is not None and not divs.empty:
-      # 取最近一整年的股利
-      one_year_ago = pd.Timestamp.now() - pd.DateOffset(years=1)
-      recent_divs = divs[divs.index >= one_year_ago]
-      if not recent_divs.empty:
-        div_val = float(recent_divs.sum())
-
-    if div_val == 0.0:
-      div_val = info.get('dividendRate') or info.get('lastDividendValue') or 0.0
-
-  except Exception:
-    pass
+  # --- 從 FinMind 取得完整財務指標 ---
+  eps_val, pe_val, div_val = get_finmind_fundamentals(stock_id)
 
   # 整理基本面字串
   eps_str = 'N/A'
