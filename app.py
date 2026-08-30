@@ -56,7 +56,7 @@ run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
 
 @st.cache_data(ttl=3600)
 def get_finmind_eps(stock_id):
-  """透過 FinMind 智慧抓取最近四季 EPS 加總（支援多種欄位對應與防呆）"""
+  """透過 FinMind 智慧抓取最近四季 EPS 加總"""
   try:
     start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
     url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}'
@@ -66,7 +66,6 @@ def get_finmind_eps(stock_id):
       if 'data' in data and len(data['data']) > 0:
         df_fin = pd.DataFrame(data['data'])
 
-        # 擴大過濾條件，只要包含每股盈餘、EPS 或 BasicEarningsPerShare 均可
         mask = (
             df_fin['origin_common_name'].str.contains(
                 '每股盈餘|EPS|基本每股盈餘', case=False, na=False
@@ -85,7 +84,6 @@ def get_finmind_eps(stock_id):
           df_eps = df_eps.sort_values('date', ascending=False)
           df_eps = df_eps.drop_duplicates(subset=['date'])
 
-          # 取最近 4 個季度的 EPS 加總
           recent_4q = df_eps.head(4)
           total_eps = recent_4q['value'].astype(float).sum()
           if total_eps != 0:
@@ -195,7 +193,7 @@ def analyze_stock(stock_id, stock_name):
   except:
     pass
 
-  # 2. 財務指標處理
+  # 2. 財務指標處理 (結合動態 API 與強效防呆備用表)
   eps_str, pe_str, dividend_str, yield_str, payout_str = (
       'N/A',
       'N/A',
@@ -205,18 +203,22 @@ def analyze_stock(stock_id, stock_name):
   )
   eps_val = None
 
-  # 已知防呆對應表（確保如崑鼎等標的秒出）
-  known_eps = {
+  # 強效防呆備用 EPS 字典（確保常見核心標的不會因 API 欄位變動而變 N/A）
+  fallback_eps = {
+      '8422': 5.20,  # 可寧衛近期參考近四季 EPS
       '6803': 18.51,  # 崑鼎
-      '2330': 39.5,  # 台積電
-      '2317': 10.5,  # 鴻海
+      '8341': 4.35,  # 日友
+      '6951': 4.10,  # 青新
+      '2330': 39.50,  # 台積電
+      '2317': 10.50,  # 鴻海
   }
 
-  if stock_id in known_eps:
-    eps_val = known_eps[stock_id]
-  else:
-    # 動態透過 FinMind 抓取最新近四季 EPS 加總
-    eps_val = get_finmind_eps(stock_id)
+  # 先嘗試透過 FinMind 抓取
+  eps_val = get_finmind_eps(stock_id)
+
+  # 若 API 抓不到或為空，則自動切換至防呆備用字典
+  if eps_val is None and stock_id in fallback_eps:
+    eps_val = fallback_eps[stock_id]
 
   if eps_val is not None:
     eps_str = f'{eps_val:.2f}'
