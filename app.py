@@ -57,8 +57,8 @@ run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
 
 @st.cache_data(ttl=3600)
 def get_finmind_fundamentals(stock_id):
-  """從 FinMind 取得本益比、殖利率、EPS"""
-  pe_val, yield_val, eps_val = 'N/A', 'N/A', 'N/A'
+  """從 FinMind 取得本益比、殖利率、EPS 與股利"""
+  pe_val, yield_val, eps_val, dividend_val = 'N/A', 'N/A', 'N/A', 'N/A'
   start_date = (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d')
 
   try:
@@ -78,9 +78,10 @@ def get_finmind_fundamentals(stock_id):
             latest['DividendYield']
         ):
           y_val = float(latest['DividendYield'])
-          if y_val < 1:
-            y_val = y_val * 100
-          yield_val = f'{y_val:.2f}%'
+          if y_val > 0:
+            if y_val < 1:
+              y_val = y_val * 100
+            yield_val = f'{y_val:.2f}%'
   except:
     pass
 
@@ -102,7 +103,23 @@ def get_finmind_fundamentals(stock_id):
   except:
     pass
 
-  return pe_val, yield_val, eps_val
+  try:
+    # 3. 取得股利政策 (TaiwanStockDividend)
+    url_div = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDividend&data_id={stock_id}&start_date={start_date}'
+    res_div = requests.get(url_div, timeout=5)
+    if res_div.status_code == 200:
+      data_div = res_div.json()
+      if 'data' in data_div and len(data_div['data']) > 0:
+        df_div = pd.DataFrame(data_div['data'])
+        # 尋找現金股利欄位 (CashDividend)
+        if 'CashDividend' in df_div.columns:
+          latest_div = df_div.iloc[-1]['CashDividend']
+          if pd.notna(latest_div) and float(latest_div) > 0:
+            dividend_val = f'{float(latest_div):.2f}元'
+  except:
+    pass
+
+  return pe_val, yield_val, eps_val, dividend_val
 
 
 @st.cache_data(ttl=3600)
@@ -203,12 +220,11 @@ def analyze_stock(stock_id, stock_name):
   except:
     pass
 
-  # 2. 取得基本面 (本益比、殖利率、EPS)
-  pe_str, yield_str, eps_str = get_finmind_fundamentals(stock_id)
-  dividend_str = 'N/A'
+  # 2. 取得基本面 (本益比、殖利率、EPS、股利)
+  pe_str, yield_str, eps_str, dividend_str = get_finmind_fundamentals(stock_id)
   payout_str = 'N/A'
 
-  # 💡 智慧防呆：如果 FinMind 本益比抓不到，但有現價與 EPS，我們自己計算！
+  # 💡 智慧防呆 1：本益比補底
   if pe_str == 'N/A' and price_val and eps_str != 'N/A':
     try:
       e_val = float(eps_str)
@@ -218,19 +234,28 @@ def analyze_stock(stock_id, stock_name):
     except:
       pass
 
-  # 試算配息金額與配息率
+  # 💡 智慧防呆 2：若有股利但無殖利率，自動用現價計算殖利率
   try:
-    if yield_str != 'N/A' and current_price != 'N/A':
+    if dividend_str != 'N/A' and price_val and price_val > 0:
+      d_num = float(dividend_str.replace('元', ''))
+      if yield_str == 'N/A':
+        calc_yield = (d_num / price_val) * 100
+        yield_str = f'{calc_yield:.2f}%'
+    elif yield_str != 'N/A' and price_val and dividend_str == 'N/A':
       y_num = float(yield_str.replace('%', ''))
-      p_num = float(current_price)
-      calc_div = (y_num / 100) * p_num
+      calc_div = (y_num / 100) * price_val
       dividend_str = f'{calc_div:.2f}元'
+  except:
+    pass
 
-      if eps_str != 'N/A':
-        e_num = float(eps_str)
-        if e_num > 0:
-          calc_payout = (calc_div / e_num) * 100
-          payout_str = f'{calc_payout:.1f}%'
+  # 💡 智慧防呆 3：計算配息率 (現金股利 / EPS)
+  try:
+    if dividend_str != 'N/A' and eps_str != 'N/A':
+      d_num = float(dividend_str.replace('元', ''))
+      e_num = float(eps_str)
+      if e_num > 0:
+        calc_payout = (d_num / e_num) * 100
+        payout_str = f'{calc_payout:.1f}%'
   except:
     pass
 
