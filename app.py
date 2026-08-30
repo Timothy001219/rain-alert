@@ -57,7 +57,7 @@ run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
 
 @st.cache_data(ttl=3600)
 def get_finmind_fundamentals(stock_id):
-  """從 FinMind 取得 EPS、本益比、殖利率等數據（強化版）"""
+  """從 FinMind 取得本益比、殖利率、EPS"""
   pe_val, yield_val, eps_val = 'N/A', 'N/A', 'N/A'
   start_date = (datetime.now() - timedelta(days=180)).strftime('%Y-%m-%d')
 
@@ -78,7 +78,6 @@ def get_finmind_fundamentals(stock_id):
             latest['DividendYield']
         ):
           y_val = float(latest['DividendYield'])
-          # FinMind 有時候殖利率是小數（例如 0.04）或百分比（例如 4.0）
           if y_val < 1:
             y_val = y_val * 100
           yield_val = f'{y_val:.2f}%'
@@ -86,14 +85,13 @@ def get_finmind_fundamentals(stock_id):
     pass
 
   try:
-    # 2. 取得 EPS (改抓 TaiwanStockFinancialStatements 並放寬篩選條件)
+    # 2. 取得 EPS
     url_eps = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}'
     res_eps = requests.get(url_eps, timeout=5)
     if res_eps.status_code == 200:
       data_eps = res_eps.json()
       if 'data' in data_eps and len(data_eps['data']) > 0:
         df_fin = pd.DataFrame(data_eps['data'])
-        # 尋找包含 EPS 或 BasicEarningsPerShare 的欄位
         eps_rows = df_fin[
             df_fin['type'].str.contains('EPS|EarningsPerShare', case=False, na=False)
         ]
@@ -197,6 +195,7 @@ def analyze_stock(stock_id, stock_name):
 
   # 1. 取得現價
   current_price = 'N/A'
+  price_val = None
   try:
     price_val = df['Close'].iloc[-1]
     if price_val:
@@ -208,6 +207,16 @@ def analyze_stock(stock_id, stock_name):
   pe_str, yield_str, eps_str = get_finmind_fundamentals(stock_id)
   dividend_str = 'N/A'
   payout_str = 'N/A'
+
+  # 💡 智慧防呆：如果 FinMind 本益比抓不到，但有現價與 EPS，我們自己計算！
+  if pe_str == 'N/A' and price_val and eps_str != 'N/A':
+    try:
+      e_val = float(eps_str)
+      if e_val > 0:
+        calc_pe = price_val / e_val
+        pe_str = f'{calc_pe:.2f}'
+    except:
+      pass
 
   # 試算配息金額與配息率
   try:
