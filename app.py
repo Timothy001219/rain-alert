@@ -181,6 +181,15 @@ def analyze_stock(stock_id, stock_name):
   k_trend = '📈 向上' if latest_k > prev_k else '📉 向下'
   d_trend = '📈 向上' if latest_d > prev_d else '📉 向下'
 
+  # KD 數值格式化與小於 20 放大處理
+  k_val_str = f'{latest_k:.2f} ({k_trend})'
+  if latest_k < 20:
+    k_val_str = f"<span style='font-size: 1.4em; color: #d9534f; font-weight: bold;'>{latest_k:.2f} ({k_trend}) 📉 [低檔超賣]</span>"
+
+  d_val_str = f'{latest_d:.2f} ({d_trend})'
+  if latest_d < 20:
+    d_val_str = f"<span style='font-size: 1.4em; color: #d9534f; font-weight: bold;'>{latest_d:.2f} ({d_trend}) 📉 [低檔超賣]</span>"
+
   revenue_summary = get_real_monthly_revenue(stock_id)
 
   return {
@@ -189,11 +198,11 @@ def analyze_stock(stock_id, stock_name):
       '現價': current_price,
       'EPS': eps_str,
       '本益比': pe_str,
-      '配息': dividend_str,
+      'dividend': dividend_str,
       '殖利率': yield_str,
       '配息率': payout_str,
-      'k': f'{latest_k:.2f} ({k_trend})',
-      'd': f'{latest_d:.2f} ({d_trend})',
+      'k': k_val_str,
+      'd': d_val_str,
       '技術訊號': signal,
       '近期營收摘要': revenue_summary,
   }
@@ -226,8 +235,8 @@ if run_btn:
         st.markdown(
             f"""
                 #### {r['代碼']} {r['名稱']} (現價: {r['現價']})
-                - **💰 財務指標**: EPS: `{r['EPS']}` | 本益比: `{r['本益比']}` | 配息: `{r['配息']}` | 殖利率: `{r['殖利率']}` | 配息率: `{r['配息率']}`
-                - **📊 技術指標**: K值: `{r['k']}` | D值: `{r['d']}` | 狀態: **{r['技術訊號']}**
+                - **💰 財務指標**: EPS: `{r['EPS']}` | 本益比: `{r['本益比']}` | 配息: `{r['dividend']}` | 殖利率: `{r['殖利率']}` | 配息率: `{r['配息率']}`
+                - **📊 技術指標**: K值: {r['k']} | D值: {r['d']} | 狀態: **{r['技術訊號']}**
                 - **📈 單月營收對比 (今年 vs 去年 YoY):**<br>{r['近期營收摘要']}
                 """,
             unsafe_allow_html=True,
