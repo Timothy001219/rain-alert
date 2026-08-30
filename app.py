@@ -19,9 +19,16 @@ st.markdown('---')
 # --- 側邊欄設定 ---
 st.sidebar.header('⚙️ 查詢設定')
 
-default_stocks = '8422 可寧衛\n6803 崑鼎\n8341 日友\n6951 青新\n1216 統一\n2912 統一超\n8462 柏文\n2762 世界健身\n5287 數字\n3130 一零四\n9917 中保科\n9925 新保\n2412 中華電\n3045 台灣大\n4904 遠傳\n5904 寶雅\n2330 台積電\n1788 杏昌\n1232 大統益\n5902 德記\n1264 德麥\n6923 中台\n5903 全家\n0050 台灣50\n6887 寶特綠\n9933 中鼎\n2317 鴻海\n2884 玉山金\n1802 台玻\n8390 金益鼎\n2891 中信金'
+default_stocks = (
+    '8422 可寧衛\n6803 崑鼎\n8341 日友\n6951 青新\n1216 統一\n2912'
+    ' 統一超\n8462 柏文\n2762 世界健身\n5287 數字\n3130 一零四\n9917'
+    ' 中保科\n9925 新保\n2412 中華電\n3045 台灣大\n4904 遠傳\n5904 寶雅\n2330'
+    ' 台積電\n1788 杏昌\n1232 大統益\n5902 德記\n1264 德麥\n6923 中台\n5903'
+    ' 全家\n0050 台灣50\n6887 寶特綠\n9933 中鼎\n2317 鴻海\n2884 玉山金\n1802'
+    ' 台玻\n8390 金益鼎\n2891 中信金'
+)
 stocks_input = st.sidebar.text_area(
-    '輸入股票清單 (代碼 名稱)', default_stocks, height=150
+    '輸入股票清單 (代碼 名稱)', default_stocks, height=250
 )
 st.sidebar.markdown(
     '_格式範例：代碼 空格 名稱，每行一檔股票。_'
@@ -64,9 +71,9 @@ def get_real_monthly_revenue(stock_id):
                   * 100
               )
               yoy_str = f'{yoy:+.2f}%'
-           rev_texts.append(
-              f'{curr_date.strftime("%Y年")}{m_str}: 今年 {curr_rev:.2f}億 | 去年'
-              f' {ly_str} | YoY: {yoy_str}'
+          rev_texts.append(
+              f'&nbsp;&nbsp;&nbsp;&nbsp;{curr_date.strftime("%Y年")}{m_str}:'
+              f' 今年 {curr_rev:.2f}億 | 去年 {ly_str} | YoY: {yoy_str}'
           )
         return '<br>'.join(rev_texts)
     return '查無近期營收'
@@ -221,8 +228,9 @@ if run_btn:
                 #### {r['代碼']} {r['名稱']} (現價: {r['現價']})
                 - **💰 財務指標**: EPS: `{r['EPS']}` | 本益比: `{r['本益比']}` | 配息: `{r['配息']}` | 殖利率: `{r['殖利率']}` | 配息率: `{r['配息率']}`
                 - **📊 技術指標**: K值: `{r['k']}` | D值: `{r['d']}` | 狀態: **{r['技術訊號']}**
-                - **📈 營收趨勢**: {r['近期營收摘要']}
-                """
+                - **📈 單月營收對比 (今年 vs 去年 YoY):**<br>{r['近期營收摘要']}
+                """,
+            unsafe_allow_html=True,
         )
         st.divider()
   else:
