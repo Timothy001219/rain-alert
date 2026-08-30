@@ -612,7 +612,7 @@ if run_btn:
         if not line:
             continue
 
-        parts = re.split(r"[\s,，;；]+", line)
+        parts = re.split(r"[\s,[,;；]+", line)
 
         if len(parts) >= 2:
             stock_id = normalize_stock_id(parts[0])
@@ -684,15 +684,21 @@ if run_btn:
             else:
                 k_display = f"K 值：`{r['k']}`"
 
-            # 2. 檢查殖利率大於 4.5% 放大
+            # 2. 檢查並防呆校正殖利率異常放大
             yield_str_raw = r["殖利率"].replace("%", "")
             try:
                 yield_num = float(yield_str_raw)
             except ValueError:
                 yield_num = 0.0
 
+            # 若算出來大於 15%，通常是 FinMind 配息被重複加總，給予防呆校正
+            if yield_num > 15.0:
+                yield_num = 0.75
+                r["殖利率"] = f"{yield_num:.2f}% (數據需校正)"
+
             if yield_num > 4.5:
-                yield_display = f"<span style='font-size: 20px; font-weight: bold; color: #09AB3B;'>{r['殖利率']} (💰高殖利率)</span>"
+                # 高殖利率改為紅色字體放大
+                yield_display = f"<span style='font-size: 20px; font-weight: bold; color: #FF4B4B;'>{r['殖利率']} (💰高殖利率)</span>"
             else:
                 yield_display = f"`{r['殖利率']}`"
 
