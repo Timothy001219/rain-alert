@@ -9,9 +9,9 @@ st.set_page_config(
     page_title='台股技術與基本面快篩儀表板', page_icon='📈', layout='wide'
 )
 
-st.title('📈 台股技術與基本面快篩儀表板 (完整精準實時數據)')
+st.title('📈 台股技術與基本面快篩儀表板 (極致完整版)')
 st.markdown(
-    '完美結合 **FinMind 專業財報、本益比與營收 API** 與 **yfinance 歷史股價與技術指標**！'
+    '完美結合 **FinMind 專業財報與營收 API** 與 **yfinance 歷史股價與技術指標**！'
 )
 st.markdown('---')
 
@@ -76,8 +76,8 @@ def get_finmind_per_and_dividend(stock_id, token):
         df = pd.DataFrame(data['data'])
         latest = df.iloc[-1]
 
-        # 尋找本益比欄位
-        for col in ['PE', 'price_earning_ratio']:
+        # 尋找本益比欄位 (支援多種可能的欄位名稱)
+        for col in ['PE', 'price_earning_ratio', 'pe']:
           if col in latest and pd.notna(latest[col]):
             val = float(latest[col])
             if val > 0:
@@ -219,6 +219,18 @@ def analyze_stock(stock_id, stock_name, token):
 
   # --- 從 FinMind 取得本益比、殖利率與配息 ---
   pe_val, yield_val, div_val = get_finmind_per_and_dividend(stock_id, token)
+
+  # 若 FinMind 漏掉本益比，嘗試用 yfinance 備援補抓
+  if not pe_val or pe_val <= 0:
+    for cand in candidates:
+      try:
+        t_info = yf.Ticker(cand).info
+        yf_pe = t_info.get('trailingPE')
+        if yf_pe and yf_pe > 0:
+          pe_val = float(yf_pe)
+          break
+      except:
+        pass
 
   # 若配息有抓到但殖利率沒抓到，用現價回推殖利率
   if div_val and not yield_val and price_val and price_val > 0:
