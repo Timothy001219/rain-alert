@@ -1,4 +1,3 @@
-
 from datetime import datetime, timedelta
 import os
 import re
@@ -10,6 +9,7 @@ import streamlit as st
 # yfinance 只作 EPS 備援；沒有安裝也不影響 FinMind 主功能
 try:
     import yfinance as yf
+
     YFINANCE_AVAILABLE = True
 except ImportError:
     yf = None
@@ -70,8 +70,6 @@ DEFAULT_STOCKS_TEXT = """8422 可寧衛
 # =========================================================
 FINMIND_URL = "https://api.finmindtrade.com/api/v4/data"
 
-# 不再把 Token 寫死在程式碼裡。
-# 可使用環境變數 FINMIND_TOKEN，也可以直接在 Streamlit 側邊欄輸入。
 ENV_TOKEN = os.getenv("FINMIND_TOKEN", "").strip()
 
 
@@ -81,16 +79,10 @@ def normalize_stock_id(stock_id: str) -> str:
 
 
 def finmind_get(dataset: str, stock_id: str, token: str = "", days: int = 365):
-    """
-    統一呼叫 FinMind API。
-    2025-05-10 後使用 Authorization: Bearer <token>，
-    不再把 token 放在 URL query string。
-    """
+    """統一呼叫 FinMind API。"""
     stock_id = normalize_stock_id(stock_id)
 
-    start_date = (
-        datetime.now() - timedelta(days=days)
-    ).strftime("%Y-%m-%d")
+    start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
 
     params = {
         "dataset": dataset,
@@ -112,12 +104,9 @@ def finmind_get(dataset: str, stock_id: str, token: str = "", days: int = 365):
             timeout=20,
         )
 
-        # HTTP 錯誤直接丟出，讓上層知道真正原因
         response.raise_for_status()
-
         payload = response.json()
 
-        # FinMind 可能回傳 status / msg
         if isinstance(payload, dict):
             if payload.get("status") not in (None, 200, "200"):
                 msg = payload.get("msg") or payload.get("message") or str(payload)
@@ -182,7 +171,6 @@ def get_price_data(stock_id: str, token: str):
     df = df.dropna(subset=["date", "close", "max", "min"])
     df = df.sort_values("date").reset_index(drop=True)
 
-    # 統一欄位名稱，方便後面的 KD 計算
     df = df.rename(
         columns={
             "open": "Open",
@@ -223,7 +211,6 @@ def get_finmind_market_data(stock_id: str, token: str):
 
             latest = df.iloc[-1]
 
-            # FinMind 現行欄位是 PER，不是 pe
             for col in ["PER", "pe", "PE", "price_earning_ratio"]:
                 if col in latest.index:
                     value = pd.to_numeric(
@@ -244,8 +231,6 @@ def get_finmind_market_data(stock_id: str, token: str):
 
                     if pd.notna(value) and float(value) >= 0:
                         value = float(value)
-
-                        # FinMind 通常可能是百分比或小數
                         yield_val = value * 100 if 0 <= value < 1 else value
                         break
 
@@ -260,13 +245,6 @@ def get_finmind_market_data(stock_id: str, token: str):
 # =========================================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def get_dividend(stock_id: str, token: str):
-    """
-    TaiwanStockDividend 現行欄位：
-    CashEarningsDistribution
-    CashStatutorySurplus
-
-    現金股利 = 兩者合計。
-    """
     try:
         df = finmind_get(
             dataset="TaiwanStockDividend",
@@ -284,30 +262,24 @@ def get_dividend(stock_id: str, token: str):
         for col in ["CashEarningsDistribution", "CashStatutorySurplus"]:
             if col not in df.columns:
                 df[col] = 0.0
-
             df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
 
         df["cash_dividend"] = (
-            df["CashEarningsDistribution"]
-            + df["CashStatutorySurplus"]
+            df["CashEarningsDistribution"] + df["CashStatutorySurplus"]
         )
 
-        # 優先選最新日期所屬年度
         df["calendar_year"] = df["date"].dt.year
         latest_year = int(df["calendar_year"].max())
 
         latest = df[df["calendar_year"] == latest_year].copy()
-
         total_div = float(latest["cash_dividend"].sum())
 
         if total_div <= 0:
-            # 如果最新曆年沒有股利，再往前找最近一個有股利的年份
             yearly = (
                 df.groupby("calendar_year")["cash_dividend"]
                 .sum()
                 .sort_index(ascending=False)
             )
-
             positive_years = yearly[yearly > 0]
 
             if positive_years.empty:
@@ -341,14 +313,8 @@ def get_real_monthly_revenue(stock_id: str, token: str):
         if "date" not in df_rev.columns or "revenue" not in df_rev.columns:
             return "FinMind 營收資料缺少 date / revenue 欄位"
 
-        df_rev["date"] = pd.to_datetime(
-            df_rev["date"],
-            errors="coerce",
-        )
-        df_rev["revenue"] = pd.to_numeric(
-            df_rev["revenue"],
-            errors="coerce",
-        )
+        df_rev["date"] = pd.to_datetime(df_rev["date"], errors="coerce")
+        df_rev["revenue"] = pd.to_numeric(df_rev["revenue"], errors="coerce")
 
         df_rev = df_rev.dropna(subset=["date", "revenue"])
         df_rev = df_rev.sort_values("date", ascending=False)
@@ -356,7 +322,6 @@ def get_real_monthly_revenue(stock_id: str, token: str):
         if df_rev.empty:
             return "查無有效單月營收資料"
 
-        # 用「年月」配對，而不是要求日期完全相同
         df_rev["year_month"] = df_rev["date"].dt.to_period("M")
 
         recent = (
@@ -372,15 +337,10 @@ def get_real_monthly_revenue(stock_id: str, token: str):
             current_revenue = float(row["revenue"]) / 1e8
 
             last_year_period = current_period - 12
-
-            last_year = df_rev[
-                df_rev["year_month"] == last_year_period
-            ]
+            last_year = df_rev[df_rev["year_month"] == last_year_period]
 
             if not last_year.empty:
-                ly_revenue_raw = float(
-                    last_year.iloc[0]["revenue"]
-                )
+                ly_revenue_raw = float(last_year.iloc[0]["revenue"])
                 ly_revenue = ly_revenue_raw / 1e8
 
                 if ly_revenue != 0:
@@ -418,18 +378,12 @@ def get_yfinance_eps(stock_id: str):
     if not YFINANCE_AVAILABLE:
         return None, "未安裝 yfinance"
 
-    candidates = [
-        f"{stock_id}.TW",
-        f"{stock_id}.TWO",
-    ]
-
+    candidates = [f"{stock_id}.TW", f"{stock_id}.TWO"]
     errors = []
 
     for symbol in candidates:
         try:
             ticker = yf.Ticker(symbol)
-
-            # info 在某些環境可能比較慢，所以不再作為主要資料源
             info = ticker.get_info()
 
             for key in [
@@ -439,13 +393,10 @@ def get_yfinance_eps(stock_id: str):
                 "dilutedEPS",
             ]:
                 value = info.get(key)
-
                 if value is not None and pd.notna(value):
                     value = float(value)
-
                     if value != 0:
                         return value, None
-
         except Exception as e:
             errors.append(f"{symbol}: {e}")
 
@@ -457,19 +408,11 @@ def get_yfinance_eps(stock_id: str):
 # =========================================================
 def calculate_kd(df: pd.DataFrame):
     n = 9
-
     lowest_low = df["Low"].rolling(window=n).min()
     highest_high = df["High"].rolling(window=n).max()
-
     denominator = highest_high - lowest_low
 
-    # 避免分母為 0
-    rsv = pd.Series(
-        50.0,
-        index=df.index,
-        dtype=float,
-    )
-
+    rsv = pd.Series(50.0, index=df.index, dtype=float)
     valid = denominator != 0
 
     rsv.loc[valid] = (
@@ -483,19 +426,12 @@ def calculate_kd(df: pd.DataFrame):
 
     for i in range(1, len(df)):
         curr_rsv = rsv.iloc[i]
-
         if pd.isna(curr_rsv):
             k_val = k_list[-1]
             d_val = d_list[-1]
         else:
-            k_val = (
-                (2 / 3) * k_list[-1]
-                + (1 / 3) * float(curr_rsv)
-            )
-            d_val = (
-                (2 / 3) * d_list[-1]
-                + (1 / 3) * k_val
-            )
+            k_val = (2 / 3) * k_list[-1] + (1 / 3) * float(curr_rsv)
+            d_val = (2 / 3) * d_list[-1] + (1 / 3) * k_val
 
         k_list.append(k_val)
         d_list.append(d_val)
@@ -519,14 +455,7 @@ def calculate_kd(df: pd.DataFrame):
     else:
         signal = "多頭" if latest_k > latest_d else "空頭"
 
-    return (
-        df,
-        latest_k,
-        latest_d,
-        k_trend,
-        d_trend,
-        signal,
-    )
+    return df, latest_k, latest_d, k_trend, d_trend, signal
 
 
 # =========================================================
@@ -534,15 +463,11 @@ def calculate_kd(df: pd.DataFrame):
 # =========================================================
 def analyze_stock(stock_id: str, stock_name: str, token: str):
     stock_id = normalize_stock_id(stock_id)
-
     if not stock_id:
         return None, "股票代碼為空"
 
     errors = []
 
-    # -----------------------------------------------------
-    # 1. FinMind 股價
-    # -----------------------------------------------------
     try:
         df = get_price_data(stock_id, token)
     except Exception as e:
@@ -555,9 +480,6 @@ def analyze_stock(stock_id: str, stock_name: str, token: str):
     price_val = float(df["Close"].iloc[-1])
     current_price = f"{price_val:.2f}"
 
-    # -----------------------------------------------------
-    # 2. KD
-    # -----------------------------------------------------
     try:
         (
             df,
@@ -570,109 +492,37 @@ def analyze_stock(stock_id: str, stock_name: str, token: str):
     except Exception as e:
         return None, f"KD 計算失敗：{e}"
 
-    # -----------------------------------------------------
-    # 3. PER / 殖利率
-    # -----------------------------------------------------
-    pe_val, yield_val, pe_errors = get_finmind_market_data(
-        stock_id,
-        token,
-    )
-
+    pe_val, yield_val, pe_errors = get_finmind_market_data(stock_id, token)
     if pe_errors:
         errors.extend(pe_errors)
 
-    # -----------------------------------------------------
-    # 4. 配息
-    # -----------------------------------------------------
-    div_val, div_year = get_dividend(
-        stock_id,
-        token,
-    )
-
-    # -----------------------------------------------------
-    # 5. EPS：先用 yfinance 備援
-    # -----------------------------------------------------
+    div_val, div_year = get_dividend(stock_id, token)
     eps_val, eps_error = get_yfinance_eps(stock_id)
 
-    # -----------------------------------------------------
-    # 6. 智慧互推
-    # -----------------------------------------------------
-    if (
-        (yield_val is None or yield_val <= 0)
-        and div_val
-        and price_val > 0
-    ):
+    if (yield_val is None or yield_val <= 0) and div_val and price_val > 0:
         yield_val = div_val / price_val * 100
 
-    if (
-        (div_val is None or div_val <= 0)
-        and yield_val
-        and price_val > 0
-    ):
+    if (div_val is None or div_val <= 0) and yield_val and price_val > 0:
         div_val = price_val * yield_val / 100
 
-    if (
-        (pe_val is None or pe_val <= 0)
-        and price_val > 0
-        and eps_val
-        and eps_val > 0
-    ):
+    if (pe_val is None or pe_val <= 0) and price_val > 0 and eps_val and eps_val > 0:
         pe_val = price_val / eps_val
 
-    if (
-        (eps_val is None or eps_val <= 0)
-        and price_val > 0
-        and pe_val
-        and pe_val > 0
-    ):
+    if (eps_val is None or eps_val <= 0) and price_val > 0 and pe_val and pe_val > 0:
         eps_val = price_val / pe_val
 
-    # -----------------------------------------------------
-    # 7. 格式化
-    # -----------------------------------------------------
-    eps_str = (
-        f"{eps_val:.2f}"
-        if eps_val is not None
-        else "N/A"
-    )
-
-    pe_str = (
-        f"{pe_val:.2f}"
-        if pe_val is not None and pe_val > 0
-        else "N/A"
-    )
-
-    dividend_str = (
-        f"{div_val:.2f}元"
-        if div_val is not None and div_val > 0
-        else "N/A"
-    )
-
-    yield_str = (
-        f"{yield_val:.2f}%"
-        if yield_val is not None and yield_val >= 0
-        else "N/A"
-    )
+    eps_str = f"{eps_val:.2f}" if eps_val is not None else "N/A"
+    pe_str = f"{pe_val:.2f}" if pe_val is not None and pe_val > 0 else "N/A"
+    dividend_str = f"{div_val:.2f}元" if div_val is not None and div_val > 0 else "N/A"
+    yield_str = f"{yield_val:.2f}%" if yield_val is not None and yield_val >= 0 else "N/A"
 
     payout_str = "N/A"
-
-    if (
-        div_val is not None
-        and eps_val is not None
-        and eps_val > 0
-    ):
+    if div_val is not None and eps_val is not None and eps_val > 0:
         payout_val = div_val / eps_val * 100
-
         if 0 < payout_val <= 300:
             payout_str = f"{payout_val:.1f}%"
 
-    # -----------------------------------------------------
-    # 8. 單月營收
-    # -----------------------------------------------------
-    monthly_rev_str = get_real_monthly_revenue(
-        stock_id,
-        token,
-    )
+    monthly_rev_str = get_real_monthly_revenue(stock_id, token)
 
     result = {
         "代碼": stock_id,
@@ -689,11 +539,7 @@ def analyze_stock(stock_id: str, stock_name: str, token: str):
         "近期營收摘要": monthly_rev_str,
         "配息年度": div_year if div_year else "N/A",
         "資料筆數": len(df),
-        "EPS備援": (
-            "yfinance"
-            if eps_val is not None
-            else "無"
-        ),
+        "EPS備援": "yfinance" if eps_val is not None else "無",
     }
 
     return result, None
@@ -721,19 +567,15 @@ stocks_text = DEFAULT_STOCKS_TEXT
 if uploaded_file is not None:
     try:
         file_bytes = uploaded_file.getvalue()
-
         try:
             file_text = file_bytes.decode("utf-8-sig")
         except UnicodeDecodeError:
             file_text = file_bytes.decode("big5")
 
         stocks_text = file_text
-
         st.sidebar.success("✅ 成功讀取您上傳的股票清單！")
-
     except Exception as e:
         st.sidebar.error(f"⚠️ 檔案讀取失敗：{e}")
-
 
 stocks_input = st.sidebar.text_area(
     "股票清單預覽與編輯（每行一檔）",
@@ -749,14 +591,12 @@ run_btn = st.sidebar.button(
 
 if not fm_token:
     st.sidebar.warning(
-        "⚠️ 尚未輸入 FinMind Token。"
-        "若 API 要求驗證，請輸入有效 Token。"
+        "⚠️ 尚未輸入 FinMind Token。若 API 要求驗證，請輸入有效 Token。"
     )
 
 if not YFINANCE_AVAILABLE:
     st.sidebar.info(
-        "ℹ️ 未安裝 yfinance。"
-        "FinMind 股價仍可正常運作，但 EPS 的 Yahoo 備援會停用。"
+        "ℹ️ 未安裝 yfinance。FinMind 股價仍可正常運作，但 EPS 的 Yahoo 備援會停用。"
     )
 
 
@@ -765,19 +605,13 @@ if not YFINANCE_AVAILABLE:
 # =========================================================
 if run_btn:
     lines = stocks_input.strip().splitlines()
-
     stock_list = []
 
     for line in lines:
         line = line.strip()
-
         if not line:
             continue
 
-        # 支援：
-        # 2330 台積電
-        # 2330,台積電
-        # 2330 台積電 其他文字
         parts = re.split(r"[\s,，;；]+", line)
 
         if len(parts) >= 2:
@@ -790,18 +624,13 @@ if run_btn:
             continue
 
         if stock_id:
-            stock_list.append(
-                (stock_id, stock_name)
-            )
+            stock_list.append((stock_id, stock_name))
 
     if not stock_list:
         st.error("❌ 沒有讀到任何股票代碼。")
         st.stop()
 
-    st.info(
-        f"正在分析 {len(stock_list)} 檔股票。"
-        "股價、KD、PER、殖利率、配息與營收主要使用 FinMind。"
-    )
+    st.info(f"正在分析 {len(stock_list)} 檔股票，請稍候...")
 
     results = []
     failed = []
@@ -811,17 +640,11 @@ if run_btn:
 
     for idx, (s_id, s_name) in enumerate(stock_list):
         status_text.write(
-            f"正在處理 {idx + 1}/{len(stock_list)}："
-            f"{s_id} {s_name}"
+            f"正在處理 {idx + 1}/{len(stock_list)}：{s_id} {s_name}"
         )
 
         try:
-            result, error = analyze_stock(
-                s_id,
-                s_name,
-                fm_token,
-            )
-
+            result, error = analyze_stock(s_id, s_name, fm_token)
             if result is not None:
                 results.append(result)
             else:
@@ -832,7 +655,6 @@ if run_btn:
                         "原因": error or "未知錯誤",
                     }
                 )
-
         except Exception as e:
             failed.append(
                 {
@@ -842,25 +664,18 @@ if run_btn:
                 }
             )
 
-        progress_bar.progress(
-            (idx + 1) / len(stock_list)
-        )
+        progress_bar.progress((idx + 1) / len(stock_list))
 
     status_text.empty()
 
-    # -----------------------------------------------------
-    # 成功結果
-    # -----------------------------------------------------
     if results:
-        st.success(
-            f"✅ 分析完成：成功 {len(results)} 檔"
-        )
+        st.success(f"✅ 分析完成：成功 {len(results)} 檔")
 
         for r in results:
             with st.container():
                 st.markdown(
                     f"""
-#### {r['代碼']} {r['名稱']}　現價：{r['現價']}
+#### {r['代碼']} {r['名稱']} 現價：{r['現價']}
 
 **💰 財務指標**
 
@@ -885,37 +700,21 @@ D 值：`{r['d']}` ｜
 EPS 來源：`{r['EPS備援']}`
 """
                 )
-
                 st.divider()
     else:
         st.warning("⚠️ 沒有成功取得任何股票資料。")
 
-    # -----------------------------------------------------
-    # 失敗清單
-    # -----------------------------------------------------
     if failed:
-        st.error(
-            f"❌ 有 {len(failed)} 檔股票取得失敗"
-        )
-
+        st.error(f"❌ 有 {len(failed)} 檔股票取得失敗")
         st.dataframe(
             pd.DataFrame(failed),
             use_container_width=True,
             hide_index=True,
         )
-
-        st.caption(
-            "上面的『原因』欄會顯示 API / 網路 / 資料欄位等實際錯誤，"
-            "不再像舊版一樣全部被 except/pass 吃掉。"
-        )
+        st.caption("上面的『原因』欄會顯示實際錯誤，方便您排查 API 狀態。")
 
 else:
-    st.info(
-        "👈 請在左側輸入 FinMind Token，"
-        "或直接點擊「開始執行批量分析」。"
-    )
+    st.info("👈 請在左側輸入 FinMind Token，或直接點擊「開始執行批量分析」。")
 
 st.markdown("---")
-st.caption(
-    "資料來源：FinMind；EPS 為可取得時使用 yfinance 作備援。"
-)
+st.caption("資料來源：FinMind；EPS 為可取得時使用 yfinance 作備援。")
