@@ -57,7 +57,7 @@ run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
 
 @st.cache_data(ttl=3600)
 def get_finmind_financials(stock_id):
-  """透過 FinMind 補抓最近四季的 EPS 與股利資料，解決 yfinance 抓不到的問題"""
+  """透過 FinMind 抓取財務數據，支援更廣泛的欄位過濾以計算最近四季 EPS"""
   try:
     start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
     url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}'
@@ -66,19 +66,34 @@ def get_finmind_financials(stock_id):
       data = res.json()
       if 'data' in data and len(data['data']) > 0:
         df_fin = pd.DataFrame(data['data'])
-        # 篩選出每股盈餘 (EPS)
-        df_eps = df_fin[
-            df_fin['origin_common_name'].str.contains(
-                '基本每股盈餘|每股盈餘', na=False
-            )
+
+        # 擴大關鍵字過濾範圍，涵蓋各種財報命名方式
+        keywords = [
+            '基本每股盈餘',
+            '每股盈餘',
+            'Basic Earnings Per Share',
+            'EarningsPerShare',
+            'EPS',
         ]
+        mask = df_fin['origin_common_name'].str.contains(
+            '|'.join(keywords), case=False, na=False
+        ) | df_fin['type'].str.contains(
+            'BasicEarningsPerShare|EPS', case=False, na=False
+        )
+
+        df_eps = df_fin[mask]
         if not df_eps.empty:
           df_eps['date'] = pd.to_datetime(df_eps['date'])
           df_eps = df_eps.sort_values('date', ascending=False)
+
+          # 有時候會抓到不同季別或累計數，過濾掉重複日期的最新紀錄
+          df_eps = df_eps.drop_duplicates(subset=['date'])
+
           # 取最近四個季度的 EPS 加總
           recent_4q = df_eps.head(4)
           total_eps = recent_4q['value'].astype(float).sum()
-          return total_eps
+          if total_eps != 0:
+            return total_eps
   except:
     pass
   return None
@@ -234,7 +249,7 @@ def analyze_stock(stock_id, stock_name):
   except:
     pass
 
-  # 💡 如果 yfinance 抓不到 EPS，改用 FinMind 財報資料庫補抓最近四季加總
+  # 💡 如果 yfinance 抓不到 EPS，改用 FinMind 財報資料庫補抓
   if eps_val is None:
     fin_eps = get_finmind_financials(stock_id)
     if fin_eps is not None:
