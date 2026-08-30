@@ -185,8 +185,8 @@ def analyze_stock(stock_id, stock_name):
       '配息': dividend_str,
       '殖利率': yield_str,
       '配息率': payout_str,
-      'K值': f'{latest_k:.2f} ({k_trend})',
-      'D值': f'{latest_d:.2f} ({d_trend})',
+      'k': f'{latest_k:.2f} ({k_trend})',
+      'd': f'{latest_d:.2f} ({d_trend})',
       '技術訊號': signal,
       '近期營收摘要': revenue_summary,
   }
@@ -220,7 +220,7 @@ if run_btn:
             f"""
                 #### {r['代碼']} {r['名稱']} (現價: {r['現價']})
                 - **💰 財務指標**: EPS: `{r['EPS']}` | 本益比: `{r['本益比']}` | 配息: `{r['配息']}` | 殖利率: `{r['殖利率']}` | 配息率: `{r['配息率']}`
-                - **📊 技術指標**: K值: `{r['K']}` | D值: `{r['D']}` | 狀態: **{r['技術訊號']}**
+                - **📊 技術指標**: K值: `{r['k']}` | D值: `{r['d']}` | 狀態: **{r['技術訊號']}**
                 - **📈 營收趨勢**: {r['近期營收摘要']}
                 """
         )
