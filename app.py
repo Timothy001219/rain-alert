@@ -9,9 +9,9 @@ st.set_page_config(
     page_title='台股技術與基本面快篩儀表板', page_icon='📈', layout='wide'
 )
 
-st.title('📈 台股技術與基本面快篩儀表板 (已內建 FinMind Token)')
+st.title('📈 台股技術與基本面快篩儀表板 (FinMind 專業數據版)')
 st.markdown(
-    '全面結合 **FinMind 專業財報與營收 API** 與 **yfinance 歷史股價與技術指標**，數據精準不漏勾！'
+    '結合 **FinMind (單月營收、本益比、殖利率)** 與 **yfinance (歷史股價與 KD 技術指標)**，數據完美對齊！'
 )
 st.markdown('---')
 
@@ -28,12 +28,16 @@ default_stocks_text = (
 # --- 側邊欄設定 ---
 st.sidebar.header('⚙️ 查詢設定')
 
-# 直接內建您的 FinMind Token
+DEFAULT_FM_TOKEN = (
+    'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoidGltb3RoeTEyMTl@gmail.com","email":"timothy1219@gmail.com","token_version":0}'
+)
+# 修正 Token 字串格式確保乾淨
 DEFAULT_FM_TOKEN = (
     'eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJ1c2VyX2lkIjoidGltb3RoeTEyMTlAZ21haWwuY29tIiwiZW1haWwiOiJ0aW1vdGh5MTIxOUBnbWFpbC5jb20iLCJ0b2tlbl92ZXJzaW9uIjowfQ.VJcdc7Igzgesc5YF_4cB-oC9grDE2Luvah2P9FiCp8E'
 )
+
 fm_token = st.sidebar.text_input(
-    'FinMind API Token (已自動填入)', value=DEFAULT_FM_TOKEN, type='password'
+    'FinMind API Token', value=DEFAULT_FM_TOKEN, type='password'
 )
 
 uploaded_file = st.sidebar.file_uploader(
@@ -60,7 +64,36 @@ run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
 
 
 @st.cache_data(ttl=3600)
-def get_real_monthly_revenue(stock_id, token=''):
+def get_finmind_per_and_dividend(stock_id, token):
+  """透過 FinMind 取得本益比、殖利率與近況資料"""
+  pe_val, yield_val, eps_val = None, None, None
+  try:
+    start_date = (datetime.now() - timedelta(days=15)).strftime('%Y-%m-%d')
+    url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPER&data_id={stock_id}&start_date={start_date}'
+    if token:
+      url += f'&token={token}'
+
+    res = requests.get(url, timeout=5)
+    if res.status_code == 200:
+      data = res.json()
+      if 'data' in data and len(data['data']) > 0:
+        df = pd.DataFrame(data['data'])
+        latest = df.iloc[-1]
+        if 'PE' in latest and pd.notna(latest['PE']):
+          pe_val = float(latest['PE'])
+        if 'dividend_yield' in latest and pd.notna(
+            latest['dividend_yield']
+        ):
+          # FinMind 的殖利率通常為小數 (例如 0.05 代表 5%) 或已經是百分比
+          dy = float(latest['dividend_yield'])
+          yield_val = dy * 100 if dy < 1 else dy
+  except:
+    pass
+  return pe_val, yield_val
+
+
+@st.cache_data(ttl=3600)
+def get_real_monthly_revenue(stock_id, token):
   """透過 FinMind 取得今年與去年同期的單月營收並計算 YoY"""
   try:
     start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
@@ -114,7 +147,7 @@ def get_real_monthly_revenue(stock_id, token=''):
     return '單月營收資料取得中略過'
 
 
-def analyze_stock(stock_id, stock_name, token=''):
+def analyze_stock(stock_id, stock_name, token):
   stock_id = stock_id.strip()
   df = pd.DataFrame()
 
@@ -142,44 +175,27 @@ def analyze_stock(stock_id, stock_name, token=''):
     price_val = float(df['Close'].iloc[-1])
     current_price = f'{price_val:.2f}'
 
-  eps_val = None
-  pe_val = None
-  div_val = 0.0
+  # --- 從 FinMind 取得本益比與殖利率 ---
+  pe_val, yield_val = get_finmind_per_and_dividend(stock_id, token)
 
-  # 嘗試用 yfinance 取得基本的 EPS 與 本益比
-  try:
-    ticker = yf.Ticker(f'{stock_id}.TW')
-    info = ticker.info
-    eps_val = info.get('trailingEps')
-    pe_val = info.get('trailingPE')
-    div_val = info.get('dividendRate') or 0.0
-  except:
-    try:
-      ticker = yf.Ticker(f'{stock_id}.TWO')
-      info = ticker.info
-      eps_val = info.get('trailingEps')
-      pe_val = info.get('trailingPE')
-      div_val = info.get('dividendRate') or 0.0
-    except:
-      pass
+  # 試算 EPS = 現價 / 本益比
+  eps_val = None
+  if price_val and pe_val and pe_val > 0:
+    eps_val = price_val / pe_val
+
+  # 試算配息 = 現價 * 殖利率
+  div_val = None
+  if price_val and yield_val and yield_val > 0:
+    div_val = price_val * (yield_val / 100)
 
   # 整理基本面字串
-  eps_str = f'{eps_val:.2f}' if eps_val and -100 < eps_val < 500 else 'N/A'
+  eps_str = f'{eps_val:.2f}' if eps_val else 'N/A'
   pe_str = f'{pe_val:.2f}' if pe_val and pe_val > 0 else 'N/A'
-  dividend_str = f'{div_val:.2f}元' if div_val and div_val > 0 else 'N/A'
-
-  yield_str = 'N/A'
-  if div_val and div_val > 0 and price_val and price_val > 0:
-    yield_str = f'{(div_val / price_val) * 100:.2f}%'
+  dividend_str = f'{div_val:.2f}元' if div_val else 'N/A'
+  yield_str = f'{yield_val:.2f}%' if yield_val else 'N/A'
 
   payout_str = 'N/A'
-  if (
-      div_val
-      and div_val > 0
-      and eps_val
-      and eps_val > 0
-      and -100 < eps_val < 500
-  ):
+  if div_val and eps_val and eps_val > 0:
     payout_str = f'{(div_val / eps_val) * 100:.1f}%'
 
   # --- 1. 計算 KD 值 ---
