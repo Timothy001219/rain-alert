@@ -9,9 +9,9 @@ st.set_page_config(
     page_title='台股技術與基本面快篩儀表板', page_icon='📈', layout='wide'
 )
 
-st.title('📈 台股技術與基本面快篩儀表板 (極致完整版)')
+st.title('📈 台股技術與基本面快篩儀表板 (終極完美版)')
 st.markdown(
-    '完美結合 **FinMind 專業財報與營收 API** 與 **yfinance 歷史股價與技術指標**！'
+    '完美結合 **FinMind 專業財報、本益比與營收 API** 與 **yfinance 歷史股價與技術指標**！'
 )
 st.markdown('---')
 
@@ -76,15 +76,14 @@ def get_finmind_per_and_dividend(stock_id, token):
         df = pd.DataFrame(data['data'])
         latest = df.iloc[-1]
 
-        # 尋找本益比欄位 (支援多種可能的欄位名稱)
-        for col in ['PE', 'price_earning_ratio', 'pe']:
+        # 準確對應 FinMind 的 pe 與 dividend_yield 欄位
+        for col in ['pe', 'PE', 'price_earning_ratio']:
           if col in latest and pd.notna(latest[col]):
             val = float(latest[col])
             if val > 0:
               pe_val = val
               break
 
-        # 尋找殖利率欄位
         for col in ['dividend_yield', 'DividendYield']:
           if col in latest and pd.notna(latest[col]):
             dy = float(latest[col])
