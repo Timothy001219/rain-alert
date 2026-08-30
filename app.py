@@ -672,7 +672,7 @@ if run_btn:
         st.success(f"✅ 分析完成：成功 {len(results)} 檔")
 
         for r in results:
-            # 1. 檢查 K 值小於 20 放大
+            # 1. 檢查 K 值小於 20 放大並整組變紅
             k_raw_str = r["k"].split(" ")[0]
             try:
                 k_num = float(k_raw_str)
@@ -680,9 +680,9 @@ if run_btn:
                 k_num = 50.0
 
             if k_num < 20:
-                k_display = f"<span style='font-size: 20px; font-weight: bold; color: #FF4B4B;'>{r['k']} (🔥超跌)</span>"
+                k_display = f"<span style='font-size: 20px; font-weight: bold; color: #FF4B4B;'>K 值：{r['k']} (🔥超跌)</span>"
             else:
-                k_display = f"`{r['k']}`"
+                k_display = f"K 值：`{r['k']}`"
 
             # 2. 檢查殖利率大於 4.5% 放大
             yield_str_raw = r["殖利率"].replace("%", "")
@@ -711,7 +711,7 @@ EPS：`{r['EPS']}` ｜
 
 **📊 技術指標**
 
-K 值：{k_display} ｜ 
+{k_display} ｜ 
 D 值：`{r['d']}` ｜ 
 狀態：**{r['技術訊號']}**
 
