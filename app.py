@@ -11,7 +11,7 @@ st.set_page_config(
 
 st.title('📈 台股技術面與基本面快篩儀表板')
 st.markdown(
-    '結合 **yfinance (股價、EPS、本益比與技術指標)** 與 **Finmind (單月營收與累計營收 YoY)**'
+    '結合 **yfinance (股價與技術指標)** 與 **Finmind (單月營收、累計 YoY 與財務數據)**'
     ' 的個人專屬工具！'
 )
 st.markdown('---')
@@ -53,6 +53,35 @@ st.sidebar.markdown(
 )
 
 run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
+
+
+@st.cache_data(ttl=3600)
+def get_finmind_financials(stock_id):
+  """透過 FinMind 補抓最近四季的 EPS 與股利資料，解決 yfinance 抓不到的問題"""
+  try:
+    start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
+    url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}'
+    res = requests.get(url, timeout=5)
+    if res.status_code == 200:
+      data = res.json()
+      if 'data' in data and len(data['data']) > 0:
+        df_fin = pd.DataFrame(data['data'])
+        # 篩選出每股盈餘 (EPS)
+        df_eps = df_fin[
+            df_fin['origin_common_name'].str.contains(
+                '基本每股盈餘|每股盈餘', na=False
+            )
+        ]
+        if not df_eps.empty:
+          df_eps['date'] = pd.to_datetime(df_eps['date'])
+          df_eps = df_eps.sort_values('date', ascending=False)
+          # 取最近四個季度的 EPS 加總
+          recent_4q = df_eps.head(4)
+          total_eps = recent_4q['value'].astype(float).sum()
+          return total_eps
+  except:
+    pass
+  return None
 
 
 @st.cache_data(ttl=3600)
@@ -155,7 +184,7 @@ def analyze_stock(stock_id, stock_name):
   except:
     pass
 
-  # 2. 透過 yfinance Ticker 抓取標準基本面 (EPS, PE, 股利, 殖利率)
+  # 2. 抓取基本面 (EPS, PE, 股利, 殖利率)
   eps_str, pe_str, dividend_str, yield_str, payout_str = (
       'N/A',
       'N/A',
@@ -163,11 +192,13 @@ def analyze_stock(stock_id, stock_name):
       'N/A',
       'N/A',
   )
+  eps_val = None
+
   try:
     ticker = yf.Ticker(symbol)
     info = ticker.info
 
-    # 修正現價（如果 info 有更即時的價格）
+    # 修正現價
     p_info = (
         info.get('regularMarketPrice')
         or info.get('currentPrice')
@@ -177,10 +208,12 @@ def analyze_stock(stock_id, stock_name):
       price_val = p_info
       current_price = f'{price_val:.2f}'
 
-    # EPS
-    eps_val = info.get('trailingEps') or info.get('forwardEps')
-    if eps_val is not None:
-      eps_str = f'{eps_val:.2f}'
+    # 嘗試從 yfinance 抓 EPS
+    eps_val = (
+        info.get('trailingEps')
+        or info.get('forwardEps')
+        or info.get('epsTrailingTwelveMonths')
+    )
 
     # 本益比
     pe_val = info.get('trailingPE') or info.get('forwardPE')
@@ -195,28 +228,27 @@ def analyze_stock(stock_id, stock_name):
     )
     if div_val is not None and div_val > 0:
       dividend_str = f'{div_val:.2f}元'
-
-      # 計算殖利率
       if price_val and price_val > 0:
         y_val = (div_val / price_val) * 100
         yield_str = f'{y_val:.2f}%'
-
-      # 計算配息率
-      if eps_val is not None and eps_val > 0:
-        p_rate = (div_val / eps_val) * 100
-        payout_str = f'{p_rate:.1f}%'
   except:
     pass
 
-  # 💡 智慧防呆：如果 yfinance 抓不到本益比但有 EPS 與現價，且數值合理才計算
-  if pe_str == 'N/A' and price_val and eps_str != 'N/A':
+  # 💡 如果 yfinance 抓不到 EPS，改用 FinMind 財報資料庫補抓最近四季加總
+  if eps_val is None:
+    fin_eps = get_finmind_financials(stock_id)
+    if fin_eps is not None:
+      eps_val = fin_eps
+
+  if eps_val is not None:
+    eps_str = f'{eps_val:.2f}'
+
+  # 💡 自動計算本益比邏輯（若 PE 仍然是 N/A 且有現價與 EPS）
+  if pe_str == 'N/A' and price_val and eps_val is not None:
     try:
-      e_val = float(eps_str)
-      if e_val > 0:
-        calc_pe = price_val / e_val
-        if (
-            0 < calc_pe < 300
-        ):  # 限制合理本益比區間，避免異常單季資料造成暴衝
+      if eps_val > 0:
+        calc_pe = price_val / eps_val
+        if 0 < calc_pe < 300:  # 合理區間防呆
           pe_str = f'{calc_pe:.2f}'
     except:
       pass
