@@ -11,7 +11,7 @@ st.set_page_config(
 
 st.title('📈 台股技術與基本面快篩儀表板 (網頁版精準實時數據)')
 st.markdown(
-    '結合 **yfinance 歷史股價** 與 **FinMind (真實財務 EPS 與營收)**，確保數據精準且無假保底！'
+    '結合 **yfinance 財務報表與歷史股價** 及 **FinMind (單月營收)**，確保數據精準且無假保底！'
 )
 st.markdown('---')
 
@@ -52,44 +52,6 @@ st.sidebar.markdown(
 )
 
 run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
-
-
-@st.cache_data(ttl=3600)
-def get_finmind_eps_fallback(stock_id):
-  """直接從 FinMind 抓取最近四季財務報表並計算真實 EPS"""
-  try:
-    start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
-    url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}'
-    res = requests.get(url, timeout=5)
-    if res.status_code == 200:
-      data = res.json()
-      if 'data' in data and len(data['data']) > 0:
-        df_fin = pd.DataFrame(data['data'])
-        mask = df_fin['type'].isin([
-            'BasicEarningsPerShare',
-            'EPS',
-            'earnings_per_share',
-            '1.07',
-        ]) | df_fin['origin_common_name'].str.contains(
-            '基本每股盈餘|每股盈餘|EPS', case=False, na=False
-        )
-        df_eps = df_fin[mask]
-        if not df_eps.empty:
-          df_eps['date'] = pd.to_datetime(df_eps['date'])
-          df_eps = df_eps.sort_values('date', ascending=False)
-          df_eps['value'] = pd.to_numeric(df_eps['value'], errors='coerce')
-          df_eps = df_eps.dropna(subset=['value']).drop_duplicates(
-              subset=['date']
-          )
-
-          recent_4q = df_eps.head(4)
-          if len(recent_4q) >= 4:
-            total_eps = recent_4q['value'].sum()
-            if total_eps != 0:
-              return round(total_eps, 2)
-  except:
-    pass
-  return None
 
 
 @st.cache_data(ttl=3600)
@@ -175,44 +137,66 @@ def analyze_stock(stock_id, stock_name):
     price_val = float(df['Close'].iloc[-1])
     current_price = f'{price_val:.2f}'
 
-  # --- 強制透過 FinMind 取得真實 EPS ---
-  eps_val = get_finmind_eps_fallback(stock_id)
+  eps_val = None
+  div_val = 0.0
+  pe_val = None
 
+  # --- 透過 yfinance 抓取財務基本面與財報計算 ---
+  try:
+    ticker = yf.Ticker(symbol)
+    info = ticker.info
+
+    # 1. 優先從 info 抓取 EPS
+    eps_val = info.get('trailingEps')
+
+    # 2. 如果 info 抓不到，改從 yfinance 的季財報自動加總最近四季
+    if eps_val is None or eps_val == 0:
+      financials = ticker.quarterly_financials
+      if financials is not None and not financials.empty:
+        # 尋找淨利或 EPS 相關欄位
+        eps_row = None
+        for col_name in ['Basic EPS', 'Diluted EPS', 'Net Income']:
+          if col_name in financials.index:
+            eps_row = financials.loc[col_name]
+            break
+        if eps_row is not None:
+          valid_eps = eps_row.dropna()
+          if len(valid_eps) >= 4:
+            eps_val = float(valid_eps.head(4).sum())
+
+    # 3. 取得本益比
+    pe_val = info.get('trailingPE')
+
+    # 4. 取得配息與殖利率
+    div_val = info.get('dividendRate') or info.get('lastDividendValue')
+    if div_val is None:
+      div_val = 0.0
+
+  except Exception:
+    pass
+
+  # 整理基本面字串
   eps_str = 'N/A'
   pe_str = 'N/A'
   dividend_str = 'N/A'
   yield_str = 'N/A'
   payout_str = 'N/A'
 
-  if eps_val is not None:
+  if eps_val is not None and eps_val != 0:
     eps_str = f'{eps_val:.2f}'
-    if price_val and price_val > 0 and eps_val > 0:
+    if pe_val is not None:
+      pe_str = f'{pe_val:.2f}'
+    elif price_val and price_val > 0 and eps_val > 0:
       calc_pe = price_val / eps_val
       pe_str = f'{calc_pe:.2f}'
-  else:
-    eps_str = 'N/A'
 
-  # 試圖從 yfinance 補充配息資訊
-  div_val = 0.0
-  try:
-    ticker = yf.Ticker(symbol)
-    info = ticker.info
-    div_val = info.get('dividendRate') or info.get('lastDividendValue')
-    if div_val is not None:
-      dividend_str = f'{div_val:.2f}元'
-    else:
-      div_val = 0.0
-
-    yield_val = info.get('dividendYield')
-    if yield_val is not None and yield_val < 1:
-      yield_str = f'{yield_val * 100:.2f}%'
-    elif div_val > 0 and price_val and price_val > 0:
+  if div_val > 0:
+    dividend_str = f'{div_val:.2f}元'
+    if price_val and price_val > 0:
       calc_yield = (div_val / price_val) * 100
       yield_str = f'{calc_yield:.2f}%'
-  except:
-    pass
 
-  if div_val and div_val > 0 and eps_val is not None and eps_val > 0:
+  if div_val > 0 and eps_val is not None and eps_val > 0:
     calc_payout = (div_val / eps_val) * 100
     payout_str = f'{calc_payout:.1f}%'
 
