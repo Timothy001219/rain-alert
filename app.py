@@ -11,7 +11,7 @@ st.set_page_config(
 
 st.title('📈 台股技術面與基本面快篩儀表板')
 st.markdown(
-    '結合 **yfinance (股價/EPS/本益比/殖利率)** 與 **Finmind (單月營收與累計營收 YoY)**'
+    '結合 **yfinance (股價與技術指標)** 與 **Finmind (單月營收、累計營收 YoY、EPS與本益比)**'
     ' 的個人專屬工具！'
 )
 st.markdown('---')
@@ -29,12 +29,10 @@ default_stocks_text = (
 # --- 側邊欄設定 ---
 st.sidebar.header('⚙️ 查詢設定')
 
-# 1. 檔案上傳元件
 uploaded_file = st.sidebar.file_uploader(
     '📂 上傳自選股檔案 (格式: 代碼 空格 名稱)', type=['txt', 'csv']
 )
 
-# 2. 文字輸入框 (預設帶入預設清單或從檔案讀取)
 if uploaded_file is not None:
   try:
     file_bytes = uploaded_file.getvalue()
@@ -55,6 +53,46 @@ st.sidebar.markdown(
 )
 
 run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
+
+
+@st.cache_data(ttl=3600)
+def get_finmind_fundamentals(stock_id):
+  """從 FinMind 取得 EPS、本益比、殖利率等數據"""
+  try:
+    start_date = (datetime.now() - timedelta(days=120)).strftime('%Y-%m-%d')
+    url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockPER&data_id={stock_id}&start_date={start_date}'
+    res = requests.get(url, timeout=5)
+    pe_val, yield_val, eps_val = 'N/A', 'N/A', 'N/A'
+    if res.status_code == 200:
+      data = res.json()
+      if 'data' in data and len(data['data']) > 0:
+        df_pe = pd.DataFrame(data['data'])
+        latest = df_pe.iloc[-1]
+        if 'PE' in latest and pd.notna(latest['PE']):
+          pe_val = f"{float(latest['PE']):.2f}"
+        if 'DividendYield' in latest and pd.notna(latest['DividendYield']):
+          # Finmind 的殖利率通常是百分比數字或小數，視情況處理
+          y_val = float(latest['DividendYield'])
+          yield_val = f'{y_val:.2f}%'
+
+    # 取得 EPS (來自 FinMind TaiwanStockFinancialStatements 或 TaiwanStockMonthRevenue)
+    url_eps = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}'
+    res_eps = requests.get(url_eps, timeout=5)
+    if res_eps.status_code == 200:
+      data_eps = res_eps.json()
+      if 'data' in data_eps and len(data_eps['data']) > 0:
+        df_fin = pd.DataFrame(data_eps['data'])
+        # 篩選 EPS 項目
+        df_eps = df_fin[
+            df_fin['type'] == 'BasicEarningsPerShare'
+        ]  # 或者依實際欄位
+        if not df_eps.empty:
+          latest_eps = df_eps.iloc[-1]['value']
+          eps_val = f'{float(latest_eps):.2f}'
+
+    return pe_val, yield_val, eps_val
+  except:
+    return 'N/A', 'N/A', 'N/A'
 
 
 @st.cache_data(ttl=3600)
@@ -147,73 +185,35 @@ def analyze_stock(stock_id, stock_name):
   if isinstance(df.columns, pd.MultiIndex):
     df.columns = df.columns.get_level_values(0)
 
-  current_price, eps_str, pe_str, dividend_str, yield_str, payout_str = (
-      'N/A',
-      'N/A',
-      'N/A',
-      'N/A',
-      'N/A',
-      'N/A',
-  )
+  # 1. 取得股價 (yfinance 最擅長的部分)
+  current_price = 'N/A'
   try:
-    ticker = yf.Ticker(symbol)
-    info = ticker.info
-
-    # 取得現價 (優先從 info 抓，若無則從歷史數據最後一筆 Close 抓)
-    price_val = (
-        info.get('regularMarketPrice')
-        or info.get('currentPrice')
-        or info.get('previousClose')
-    )
-    if not price_val and not df.empty:
-      price_val = df['Close'].iloc[-1]
-
+    price_val = df['Close'].iloc[-1]
     if price_val:
       current_price = f'{price_val:.2f}'
-
-    # 取得 EPS
-    eps_val = info.get('trailingEps') or info.get('forwardEps')
-    if eps_val is not None:
-      eps_str = f'{eps_val:.2f}'
-
-    # 取得本益比
-    pe_val = info.get('trailingPE') or info.get('forwardPE')
-    if pe_val is not None:
-      pe_str = f'{pe_val:.2f}'
-
-    # 取得配息
-    div_val = (
-        info.get('dividendRate')
-        or info.get('lastDividendValue')
-        or info.get('trailingAnnualDividendRate')
-    )
-    if div_val is not None and div_val > 0:
-      dividend_str = f'{div_val:.2f}元'
-    else:
-      div_val = 0.0
-      dividend_str = '0.00元'
-
-    # 計算殖利率
-    if div_val > 0 and price_val and price_val > 0:
-      calc_yield = (div_val / price_val) * 100
-      yield_str = f'{calc_yield:.2f}%'
-    else:
-      yield_str = '0.00%'
-
-    # 計算配息率
-    if div_val > 0 and eps_val is not None and eps_val > 0:
-      calc_payout = (div_val / eps_val) * 100
-      payout_str = f'{calc_payout:.1f}%'
-    else:
-      payout_str = 'N/A'
-
   except:
     pass
 
-  # 如果價格還是抓不到，用歷史收盤補底
-  if current_price == 'N/A' and not df.empty:
-    price_val = df['Close'].iloc[-1]
-    current_price = f'{price_val:.2f}'
+  # 2. 取得基本面 (改從 FinMind 取得本益比、殖利率、EPS)
+  pe_str, yield_str, eps_str = get_finmind_fundamentals(stock_id)
+  dividend_str = 'N/A'
+  payout_str = 'N/A'
+
+  # 試算配息金額 (若有殖利率與現價)
+  try:
+    if yield_str != 'N/A' and current_price != 'N/A':
+      y_num = float(yield_str.replace('%', ''))
+      p_num = float(current_price)
+      calc_div = (y_num / 100) * p_num
+      dividend_str = f'{calc_div:.2f}元'
+
+      if eps_str != 'N/A':
+        e_num = float(eps_str)
+        if e_num > 0:
+          calc_payout = (calc_div / e_num) * 100
+          payout_str = f'{calc_payout:.1f}%'
+  except:
+    pass
 
   n = 9
   lowest_low = df['Low'].rolling(window=n).min()
@@ -246,7 +246,6 @@ def analyze_stock(stock_id, stock_name):
   k_trend = '📈 向上' if latest_k > prev_k else '📉 向下'
   d_trend = '📈 向上' if latest_d > prev_d else '📉 向下'
 
-  # KD 數值格式化與小於 20 放大處理
   k_val_str = f'{latest_k:.2f} ({k_trend})'
   if latest_k < 20:
     k_val_str = f"<span style='font-size: 1.4em; color: #d9534f; font-weight: bold;'>{latest_k:.2f} ({k_trend}) 📉 [低檔超賣]</span>"
