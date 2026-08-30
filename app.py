@@ -11,7 +11,7 @@ st.set_page_config(
 
 st.title('📈 台股技術與基本面快篩儀表板 (網頁版精準實時數據)')
 st.markdown(
-    '結合 **yfinance 歷史股價** 與 **FinMind (真實財務、營收與股利)**，確保數據完整不漏勾！'
+    '結合 **yfinance 歷史股價與精準 EPS** 與 **FinMind (單月營收)**，確保財務數據乾淨正確！'
 )
 st.markdown('---')
 
@@ -52,44 +52,6 @@ st.sidebar.markdown(
 )
 
 run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
-
-
-@st.cache_data(ttl=3600)
-def get_finmind_dividend(stock_id):
-  """從 FinMind 取得最近一年的現金股利總額"""
-  try:
-    start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
-    url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockDividend&data_id={stock_id}&start_date={start_date}'
-    res = requests.get(url, timeout=5)
-    if res.status_code == 200:
-      data = res.json()
-      if 'data' in data and len(data['data']) > 0:
-        df_div = pd.DataFrame(data['data'])
-        # 篩選現金股利 (CashDividend)
-        if 'type' in df_div.columns:
-          df_cash = df_div[
-              df_div['type'].str.contains('Cash|現金', case=False, na=False)
-          ]
-        else:
-          df_cash = df_div
-
-        if not df_cash.empty:
-          df_cash['date'] = pd.to_datetime(df_cash['date'])
-          df_cash = df_cash.sort_values('date', ascending=False)
-          # 加總最近一年度的現金股利
-          latest_year = df_cash['date'].dt.year.iloc[0]
-          df_latest_year = df_cash[df_cash['date'].dt.year == latest_year]
-          total_div = pd.to_numeric(
-              df_latest_year['stock_dividend']
-              if 'stock_dividend' in df_latest_year.columns
-              else df_latest_year['value'],
-              errors='coerce',
-          ).sum()
-          if total_div > 0:
-            return float(total_div)
-  except:
-    pass
-  return 0.0
 
 
 @st.cache_data(ttl=3600)
@@ -184,26 +146,44 @@ def analyze_stock(stock_id, stock_name):
     ticker = yf.Ticker(symbol)
     info = ticker.info
 
+    # 1. 取得 EPS
     eps_val = info.get('trailingEps')
-    if eps_val is None or eps_val == 0:
+    if eps_val is None or eps_val == 0 or abs(eps_val) > 1000:
       financials = ticker.quarterly_financials
       if financials is not None and not financials.empty:
-        for col_name in ['Basic EPS', 'Diluted EPS', 'Net Income']:
+        # 嚴格過濾真實 EPS 欄位，排除淨利總額
+        for col_name in ['Basic EPS', 'Diluted EPS']:
           if col_name in financials.index:
             eps_row = financials.loc[col_name]
             valid_eps = eps_row.dropna()
             if len(valid_eps) >= 4:
-              eps_val = float(valid_eps.head(4).sum())
-              break
+              val_sum = float(valid_eps.head(4).sum())
+              # 確保加總後的 EPS 在合理範圍內 (例如 -50 到 200 之間)
+              if -50 < val_sum < 300:
+                eps_val = val_sum
+                break
 
+    # 若 EPS 異常大（超過合理範圍），直接歸零或設為 N/A
+    if eps_val is not None and (eps_val > 500 or eps_val < -100):
+      eps_val = None
+
+    # 2. 取得本益比
     pe_val = info.get('trailingPE')
-    div_val = info.get('dividendRate') or info.get('lastDividendValue')
+
+    # 3. 取得配息（直接從歷史股利加總過去一年）
+    divs = ticker.dividends
+    if divs is not None and not divs.empty:
+      # 取最近一整年的股利
+      one_year_ago = pd.Timestamp.now() - pd.DateOffset(years=1)
+      recent_divs = divs[divs.index >= one_year_ago]
+      if not recent_divs.empty:
+        div_val = float(recent_divs.sum())
+
+    if div_val == 0.0:
+      div_val = info.get('dividendRate') or info.get('lastDividendValue') or 0.0
+
   except Exception:
     pass
-
-  # 如果 yfinance 抓不到股利，改用 FinMind 補強
-  if not div_val or div_val == 0.0:
-    div_val = get_finmind_dividend(stock_id)
 
   # 整理基本面字串
   eps_str = 'N/A'
@@ -214,7 +194,7 @@ def analyze_stock(stock_id, stock_name):
 
   if eps_val is not None and eps_val != 0:
     eps_str = f'{eps_val:.2f}'
-    if pe_val is not None:
+    if pe_val is not None and pe_val > 0:
       pe_str = f'{pe_val:.2f}'
     elif price_val and price_val > 0 and eps_val > 0:
       calc_pe = price_val / eps_val
