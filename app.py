@@ -11,7 +11,7 @@ st.set_page_config(
 
 st.title('📈 台股技術面與基本面快篩儀表板')
 st.markdown(
-    '結合 **yfinance (股價/EPS/本益比/殖利率)** 與 **Finmind (單月營收 YoY)**'
+    '結合 **yfinance (股價/EPS/本益比/殖利率)** 與 **Finmind (單月營收與累計營收 YoY)**'
     ' 的個人專屬工具！'
 )
 st.markdown('---')
@@ -37,9 +37,7 @@ uploaded_file = st.sidebar.file_uploader(
 # 2. 文字輸入框 (預設帶入預設清單或從檔案讀取)
 if uploaded_file is not None:
   try:
-    # 讀取上傳的檔案內容並轉為字串
     file_bytes = uploaded_file.getvalue()
-    # 嘗試用 utf-8 或 big5 解碼（避免中文亂碼）
     try:
       file_text = file_bytes.decode('utf-8')
     except:
@@ -93,9 +91,36 @@ def get_real_monthly_revenue(stock_id):
                   * 100
               )
               yoy_str = f'{yoy:+.2f}%'
+
+          # 計算累計營收 (當年度 1月 到 該月份)
+          curr_year = curr_date.year
+          # 今年累計
+          this_year_mask = (df_rev['date'].dt.year == curr_year) & (
+              df_rev['date'].dt.month <= curr_date.month
+          )
+          this_year_acc = df_rev[this_year_mask]['revenue'].sum() / 1e8
+
+          # 去年累計
+          last_year_mask = (df_rev['date'].dt.year == curr_year - 1) & (
+              df_rev['date'].dt.month <= curr_date.month
+          )
+          last_year_acc = df_rev[last_year_mask]['revenue'].sum() / 1e8
+
+          acc_yoy_str = 'N/A'
+          if last_year_acc > 0:
+            acc_yoy = (
+                (this_year_acc - last_year_acc) / last_year_acc * 100
+            )
+            acc_yoy_str = f'{acc_yoy:+.2f}%'
+
+          acc_str = (
+              f' | 累計: 今年 {this_year_acc:.2f}億 (去年 {last_year_acc:.2f}億,'
+              f' 累計YoY: {acc_yoy_str})'
+          )
+
           rev_texts.append(
               f'&nbsp;&nbsp;&nbsp;&nbsp;{curr_date.strftime("%Y年")}{m_str}:'
-              f' 今年 {curr_rev:.2f}億 | 去年 {ly_str} | YoY: {yoy_str}'
+              f' 單月 {curr_rev:.2f}億 (去年 {ly_str}, YoY: {yoy_str}){acc_str}'
           )
         return '<br>'.join(rev_texts)
     return '查無近期營收'
@@ -259,7 +284,7 @@ if run_btn:
                 #### {r['代碼']} {r['名稱']} (現價: {r['現價']})
                 - **💰 財務指標**: EPS: `{r['EPS']}` | 本益比: `{r['本益比']}` | 配息: `{r['dividend']}` | 殖利率: `{r['殖利率']}` | 配息率: `{r['配息率']}`
                 - **📊 技術指標**: K值: {r['k']} | D值: {r['d']} | 狀態: **{r['技術訊號']}**
-                - **📈 單月營收對比 (今年 vs 去年 YoY):**<br>{r['近期營收摘要']}
+                - **📈 營收數據 (單月與累計 YoY):**<br>{r['近期營收摘要']}
                 """,
             unsafe_allow_html=True,
         )
