@@ -193,19 +193,12 @@ def analyze_stock(stock_id, stock_name):
   except:
     pass
 
-  # 2. 財務指標處理 (結合動態 API 與強效防呆備用表)
-  eps_str, pe_str, dividend_str, yield_str, payout_str = (
-      'N/A',
-      'N/A',
-      'N/A',
-      'N/A',
-      'N/A',
-  )
+  # 2. 財務指標處理 (EPS)
+  eps_str, pe_str = 'N/A', 'N/A'
   eps_val = None
 
-  # 強效防呆備用 EPS 字典（確保常見核心標的不會因 API 欄位變動而變 N/A）
   fallback_eps = {
-      '8422': 5.20,  # 可寧衛近期參考近四季 EPS
+      '8422': 5.20,  # 可寧衛
       '6803': 18.51,  # 崑鼎
       '8341': 4.35,  # 日友
       '6951': 4.10,  # 青新
@@ -213,15 +206,28 @@ def analyze_stock(stock_id, stock_name):
       '2317': 10.50,  # 鴻海
   }
 
-  # 先嘗試透過 FinMind 抓取
   eps_val = get_finmind_eps(stock_id)
-
-  # 若 API 抓不到或為空，則自動切換至防呆備用字典
   if eps_val is None and stock_id in fallback_eps:
     eps_val = fallback_eps[stock_id]
 
   if eps_val is not None:
     eps_str = f'{eps_val:.2f}'
+
+  # 3. 配息與殖利率防呆備用表（解決台股 yfinance 抓不到配息的問題）
+  dividend_str, yield_str, payout_str = 'N/A', 'N/A', 'N/A'
+  div_val = None
+
+  fallback_dividends = {
+      '8422': 4.50,  # 可寧衛近年現金股利參考
+      '6803': 12.00,  # 崑鼎近年現金股利參考
+      '8341': 3.50,  # 日友近年現金股利參考
+      '6951': 3.20,  # 青新近年現金股利參考
+      '2330': 16.00,  # 台積電
+      '2317': 5.40,  # 鴻海
+  }
+
+  if stock_id in fallback_dividends:
+    div_val = fallback_dividends[stock_id]
 
   # 嘗試透過 yfinance 補充即時價格與配息
   try:
@@ -237,23 +243,27 @@ def analyze_stock(stock_id, stock_name):
       price_val = p_info
       current_price = f'{price_val:.2f}'
 
-    div = (
+    yf_div = (
         info.get('dividendRate')
         or info.get('lastDividendValue')
         or info.get('trailingAnnualDividendRate')
     )
-    if div is not None and div > 0:
-      dividend_str = f'{div:.2f}元'
-      if price_val and price_val > 0:
-        y_val = (div / price_val) * 100
-        yield_str = f'{y_val:.2f}%'
-      if eps_val is not None and eps_val > 0:
-        p_rate = (div / eps_val) * 100
-        payout_str = f'{p_rate:.1f}%'
+    if yf_div is not None and yf_div > 0:
+      div_val = yf_div
   except:
     pass
 
-  # 💡 自動計算本益比邏輯（若有現價與 EPS，自動算出本益比）
+  # 組合配息相關數值
+  if div_val is not None and div_val > 0:
+    dividend_str = f'{div_val:.2f}元'
+    if price_val and price_val > 0:
+      y_val = (div_val / price_val) * 100
+      yield_str = f'{y_val:.2f}%'
+    if eps_val is not None and eps_val > 0:
+      p_rate = (div_val / eps_val) * 100
+      payout_str = f'{p_rate:.1f}%'
+
+  # 自動計算本益比邏輯
   if price_val and eps_val is not None:
     try:
       if eps_val > 0:
@@ -263,7 +273,7 @@ def analyze_stock(stock_id, stock_name):
     except:
       pass
 
-  # 3. 技術指標計算 (KD)
+  # 4. 技術指標計算 (KD)
   n = 9
   lowest_low = df['Low'].rolling(window=n).min()
   highest_high = df['High'].rolling(window=n).max()
