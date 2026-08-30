@@ -9,9 +9,9 @@ st.set_page_config(
     page_title='台股技術與基本面快篩儀表板', page_icon='📈', layout='wide'
 )
 
-st.title('📈 台股技術面與基本面快篩儀表板')
+st.title('📈 台股技術面與基本面快篩儀表板 (含營收動態估算配息)')
 st.markdown(
-    '結合 **yfinance (股價與技術指標)** 與 **Finmind (單月營收與財報數據)** 的個人專屬工具！'
+    '結合 **yfinance (技術指標)**、**Finmind (累計營收 YoY)** 與 **智慧配息估算模型**！'
 )
 st.markdown('---')
 
@@ -56,7 +56,6 @@ run_btn = st.sidebar.button('🚀 開始執行批量分析', type='primary')
 
 @st.cache_data(ttl=3600)
 def get_finmind_eps(stock_id):
-  """透過 FinMind 智慧抓取最近四季 EPS 加總"""
   try:
     start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
     url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockFinancialStatements&data_id={stock_id}&start_date={start_date}'
@@ -65,7 +64,6 @@ def get_finmind_eps(stock_id):
       data = res.json()
       if 'data' in data and len(data['data']) > 0:
         df_fin = pd.DataFrame(data['data'])
-
         mask = (
             df_fin['origin_common_name'].str.contains(
                 '每股盈餘|EPS|基本每股盈餘', case=False, na=False
@@ -78,12 +76,10 @@ def get_finmind_eps(stock_id):
             | df_fin['type'] == 'EPS'
         )
         df_eps = df_fin[mask]
-
         if not df_eps.empty:
           df_eps['date'] = pd.to_datetime(df_eps['date'])
           df_eps = df_eps.sort_values('date', ascending=False)
           df_eps = df_eps.drop_duplicates(subset=['date'])
-
           recent_4q = df_eps.head(4)
           total_eps = recent_4q['value'].astype(float).sum()
           if total_eps != 0:
@@ -94,7 +90,8 @@ def get_finmind_eps(stock_id):
 
 
 @st.cache_data(ttl=3600)
-def get_real_monthly_revenue(stock_id):
+def get_real_monthly_revenue_and_acc_yoy(stock_id):
+  """取得近期營收文字摘要，並同時回傳最新一筆的「累計營收 YoY」數值供估算使用"""
   try:
     start_date = (datetime.now() - timedelta(days=730)).strftime('%Y-%m-%d')
     url = f'https://api.finmindtrade.com/api/v4/data?dataset=TaiwanStockMonthRevenue&data_id={stock_id}&start_date={start_date}'
@@ -108,6 +105,9 @@ def get_real_monthly_revenue(stock_id):
         recent_months = df_rev.head(3)
 
         rev_texts = []
+        latest_acc_yoy = 0.0
+        is_first = True
+
         for _, row in recent_months.iterrows():
           curr_date = row['date']
           curr_rev = row['revenue'] / 1e8
@@ -140,25 +140,29 @@ def get_real_monthly_revenue(stock_id):
           last_year_acc = df_rev[last_year_mask]['revenue'].sum() / 1e8
 
           acc_yoy_str = 'N/A'
+          acc_yoy_val = 0.0
           if last_year_acc > 0:
-            acc_yoy = (
+            acc_yoy_val = (
                 (this_year_acc - last_year_acc) / last_year_acc * 100
             )
-            acc_yoy_str = f'{acc_yoy:+.2f}%'
+            acc_yoy_str = f'{acc_yoy_val:+.2f}%'
+
+          if is_first:
+            latest_acc_yoy = acc_yoy_val
+            is_first = False
 
           acc_str = (
               f' | 累計: 今年 {this_year_acc:.2f}億 (去年 {last_year_acc:.2f}億,'
               f' 累計YoY: {acc_yoy_str})'
           )
-
           rev_texts.append(
               f'&nbsp;&nbsp;&nbsp;&nbsp;{curr_date.strftime("%Y年")}{m_str}:'
               f' 單月 {curr_rev:.2f}億 (去年 {ly_str}, YoY: {yoy_str}){acc_str}'
           )
-        return '<br>'.join(rev_texts)
-    return '查無近期營收'
+        return '<br>'.join(rev_texts), latest_acc_yoy
+    return '查無近期營收', 0.0
   except:
-    return '營收取得略過'
+    return '營收取得略過', 0.0
 
 
 def analyze_stock(stock_id, stock_name):
@@ -183,7 +187,6 @@ def analyze_stock(stock_id, stock_name):
   if isinstance(df.columns, pd.MultiIndex):
     df.columns = df.columns.get_level_values(0)
 
-  # 1. 取得現價
   current_price = 'N/A'
   price_val = None
   try:
@@ -193,47 +196,44 @@ def analyze_stock(stock_id, stock_name):
   except:
     pass
 
-  # 2. 財務指標處理 (EPS)
   eps_str, pe_str = 'N/A', 'N/A'
   eps_val = None
-
   fallback_eps = {
-      '8422': 5.20,  # 可寧衛
-      '6803': 18.51,  # 崑鼎
-      '8341': 4.35,  # 日友
-      '6951': 4.10,  # 青新
-      '2330': 39.50,  # 台積電
-      '2317': 10.50,  # 鴻海
+      '8422': 5.20,
+      '6803': 18.51,
+      '8341': 4.35,
+      '6951': 4.10,
+      '2330': 39.50,
+      '2317': 10.50,
   }
 
   eps_val = get_finmind_eps(stock_id)
   if eps_val is None and stock_id in fallback_eps:
     eps_val = fallback_eps[stock_id]
-
   if eps_val is not None:
     eps_str = f'{eps_val:.2f}'
 
-  # 3. 配息與殖利率防呆備用表（解決台股 yfinance 抓不到配息的問題）
+  # 取得營收摘要與最新累計 YoY
+  revenue_summary, acc_yoy = get_real_monthly_revenue_and_acc_yoy(stock_id)
+
+  # 配息基準與預估模型
   dividend_str, yield_str, payout_str = 'N/A', 'N/A', 'N/A'
   div_val = None
-
   fallback_dividends = {
-      '8422': 4.50,  # 可寧衛近年現金股利參考
-      '6803': 12.00,  # 崑鼎近年現金股利參考
-      '8341': 3.50,  # 日友近年現金股利參考
-      '6951': 3.20,  # 青新近年現金股利參考
-      '2330': 16.00,  # 台積電
-      '2317': 5.40,  # 鴻海
+      '8422': 4.50,
+      '6803': 12.00,
+      '8341': 3.50,
+      '6951': 3.20,
+      '2330': 16.00,
+      '2317': 5.40,
   }
 
   if stock_id in fallback_dividends:
     div_val = fallback_dividends[stock_id]
 
-  # 嘗試透過 yfinance 補充即時價格與配息
   try:
     ticker = yf.Ticker(symbol)
     info = ticker.info
-
     p_info = (
         info.get('regularMarketPrice')
         or info.get('currentPrice')
@@ -253,17 +253,25 @@ def analyze_stock(stock_id, stock_name):
   except:
     pass
 
-  # 組合配息相關數值
+  # 🌟 核心估算：以累計營收成長率的 80% 來估算未來配息與殖利率
   if div_val is not None and div_val > 0:
-    dividend_str = f'{div_val:.2f}元'
+    estimated_div = div_val * (1 + (acc_yoy / 100.0) * 0.8)
+    dividend_str = (
+        f'{div_val:.2f}元 (估算未來: <span'
+        f" style='color: #2e7d32; font-weight: bold;'>{estimated_div:.2f}元</span>)"
+    )
+
     if price_val and price_val > 0:
-      y_val = (div_val / price_val) * 100
-      yield_str = f'{y_val:.2f}%'
+      est_yield = (estimated_div / price_val) * 100
+      yield_str = (
+          f"<span style='color: #2e7d32; font-weight:"
+          f" bold;'>{est_yield:.2f}%</span>"
+      )
+
     if eps_val is not None and eps_val > 0:
-      p_rate = (div_val / eps_val) * 100
+      p_rate = (estimated_div / eps_val) * 100
       payout_str = f'{p_rate:.1f}%'
 
-  # 自動計算本益比邏輯
   if price_val and eps_val is not None:
     try:
       if eps_val > 0:
@@ -273,7 +281,7 @@ def analyze_stock(stock_id, stock_name):
     except:
       pass
 
-  # 4. 技術指標計算 (KD)
+  # 技術指標計算 (KD)
   n = 9
   lowest_low = df['Low'].rolling(window=n).min()
   highest_high = df['High'].rolling(window=n).max()
@@ -312,8 +320,6 @@ def analyze_stock(stock_id, stock_name):
   d_val_str = f'{latest_d:.2f} ({d_trend})'
   if latest_d < 20:
     d_val_str = f"<span style='font-size: 1.4em; color: #d9534f; font-weight: bold;'>{latest_d:.2f} ({d_trend}) 📉 [低檔超賣]</span>"
-
-  revenue_summary = get_real_monthly_revenue(stock_id)
 
   return {
       '代碼': stock_id,
@@ -358,7 +364,7 @@ if run_btn:
         st.markdown(
             f"""
                 #### {r['代碼']} {r['名稱']} (現價: {r['現價']})
-                - **💰 財務指標**: EPS: `{r['EPS']}` | 本益比: `{r['本益比']}` | 配息: `{r['dividend']}` | 殖利率: `{r['殖利率']}` | 配息率: `{r['配息率']}`
+                - **💰 財務指標**: EPS: `{r['EPS']}` | 本益比: `{r['本益比']}` | 配息: {r['dividend']} | 預估殖利率: {r['殖利率']} | 預估配息率: `{r['配息率']}`
                 - **📊 技術指標**: K值: {r['k']} | D值: {r['d']} | 狀態: **{r['技術訊號']}**
                 - **📈 營收數據 (單月與累計 YoY):**<br>{r['近期營收摘要']}
                 """,
