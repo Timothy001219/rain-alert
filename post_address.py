@@ -106,18 +106,19 @@ elif choice == "歷史記錄查詢":
             
             st.warning(f"找到 {len(results)} 筆雲端紀錄（已依地址數字由小到大排序）！")
             
-            for row in results:
+            # 使用 enumerate 產生絕對不會重複的編號 i
+            for i, row in enumerate(results):
                 record_id = row.get('id')
                 st.markdown(f"### 👤 姓名: {row['name']}")
                 st.write(f"**地址:** {row['address']} | **狀態:** {row['status']} | **時間:** {row['timestamp']}")
                 
                 if row.get('image_url'):
                     st.image(row['image_url'], width=200, caption="雲端存檔照片")
-                    with st.expander("🔍 點擊展開看清晰大圖"):
+                    with st.expander("🔍 點擊展開看清晰大圖", expanded=False):
                         st.image(row['image_url'], width=450, caption="完整大圖檢視")
                 
-                # 醒目的刪除按鈕
-                if st.button(f"🗑️ 刪除這筆紀錄 ({row['name']} - {row['address']})", key=f"del_{record_id}"):
+                # 結合編號 i 與 record_id，確保 key 絕對唯一
+                if st.button(f"🗑️ 刪除這筆紀錄 ({row['name']} - {row['address']})", key=f"del_{i}_{record_id}"):
                     img_url = row.get('image_url', '')
                     if img_url:
                         try:
