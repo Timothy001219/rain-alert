@@ -4,3 +4,5 @@ urllib3
 pandas
 yfinance
 streamlit
+Pillow
+supabase
