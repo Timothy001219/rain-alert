@@ -117,7 +117,7 @@ elif choice == "歷史記錄查詢":
                     with st.expander("🔍 點擊展開看清晰大圖", expanded=False):
                         st.image(row['image_url'], width=450, caption="完整大圖檢視")
                 
-                # 結合編號 i 與 record_id，確保 key 絕對唯一，並加入型態轉型與除錯顯示
+                # 結合編號 i 與 record_id，確保 key 絕對唯一，並印出除錯結果讓畫面停住
                 if st.button(f"🗑️ 刪除這筆紀錄 ({row['name']} - {row['address']})", key=f"del_{i}_{record_id}"):
                     img_url = row.get('image_url', '')
                     if img_url:
@@ -127,15 +127,13 @@ elif choice == "歷史記錄查詢":
                         except Exception as e:
                             pass
                     
-                    # 強制將 record_id 轉為整數 int，確保與資料庫 int8 欄位完美匹配
+                    # 強制將 record_id 轉為整數 int
                     target_id = int(record_id)
                     res = supabase.table("records").delete().eq("id", target_id).execute()
                     
-                    # 顯示刪除後的回應結果用來確認
-                    st.write("刪除回應結果：", res)
-                    
-                    st.success(f"已成功刪除 {row['name']} 的紀錄！")
-                    st.rerun()
+                    # 顯示刪除後的回應結果，讓畫面停住供您檢視
+                    st.write("🔍 刪除回應結果：", res)
+                    st.success(f"已成功發送刪除指令！請看上方回應結果確認。")
                 
                 st.markdown("---")
         else:
