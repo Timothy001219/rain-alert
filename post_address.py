@@ -49,8 +49,9 @@ if choice == "現場拍照登錄":
                 try:
                     prompt_text = '請幫我分析這張門牌或信件照片，提取出「姓名」與「地址」（包含路名與號碼）。請嚴格使用以下 JSON 格式回傳，不要有其他 markdown 標籤或廢話：{"name": "辨識到的姓名或空字串", "address": "辨識到的完整地址或空字串"}'
                     
+                    # 更新為最新的 gemini-3.6-flash 模型
                     response = ai_client.models.generate_content(
-                        model='gemini-2.5-flash',
+                        model='gemini-3.6-flash',
                         contents=[image, prompt_text]
                     )
                     res_text = response.text.strip()
