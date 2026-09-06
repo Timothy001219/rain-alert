@@ -45,29 +45,42 @@ if choice == "現場拍照登錄":
         
         # 🤖 AI 智慧辨識按鈕
         if st.button("✨ 使用 AI 自動辨識圖片中的文字"):
-            with st.spinner("AI 正在努力辨識圖片內容..."):
-                try:
-                    prompt_text = '請幫我分析這張門牌或信件照片，提取出「姓名」與「地址」（包含路名與號碼）。請嚴格使用以下 JSON 格式回傳，不要有其他 markdown 標籤或廢話：{"name": "辨識到的姓名或空字串", "address": "辨識到的完整地址或空字串"}'
-                    
-                    # 更新為最新的 gemini-3.6-flash 模型
-                    response = ai_client.models.generate_content(
-                        model='gemini-3.6-flash',
-                        contents=[image, prompt_text]
-                    )
-                    res_text = response.text.strip()
-                    if res_text.startswith("```json"):
-                        res_text = res_text[7:]
-                    if res_text.endswith("```"):
-                        res_text = res_text[:-3]
+            with st.spinner("AI 正在努力辨識圖片內容（若遇伺服器忙碌將自動切換）..."):
+                prompt_text = '請幫我分析這張門牌或信件照片，提取出「姓名」與「地址」（包含路名與號碼）。請嚴格使用以下 JSON 格式回傳，不要有其他 markdown 標籤或廢話：{"name": "辨識到的姓名或空字串", "address": "辨識到的完整地址或空字串"}'
+                
+                models_to_try = ['gemini-3.6-flash', 'gemini-1.5-flash']
+                success = False
+                res_text = ""
+                
+                for model_name in models_to_try:
+                    try:
+                        response = ai_client.models.generate_content(
+                            model=model_name,
+                            contents=[image, prompt_text]
+                        )
+                        res_text = response.text.strip()
+                        success = True
+                        break
+                    except Exception as e:
+                        continue # 如果這個模型忙線，自動嘗試下一個
+                
+                if success:
+                    try:
+                        if res_text.startswith("```json"):
+                            res_text = res_text[7:]
+                        if res_text.endswith("```"):
+                            res_text = res_text[:-3]
+                            
+                        data_parsed = json.loads(res_text.strip())
+                        st.session_state["ai_name"] = data_parsed.get("name", "")
+                        ai_full_address = data_parsed.get("address", "")
+                        st.session_state["ai_lane"] = ai_full_address
                         
-                    data_parsed = json.loads(res_text.strip())
-                    st.session_state["ai_name"] = data_parsed.get("name", "")
-                    ai_full_address = data_parsed.get("address", "")
-                    st.session_state["ai_lane"] = ai_full_address
-                    
-                    st.success(f"AI 辨識成功！辨識結果 -> 姓名: {st.session_state['ai_name']} | 地址: {ai_full_address}")
-                except Exception as e:
-                    st.error(f"AI 辨識失敗: {e}")
+                        st.success(f"AI 辨識成功！辨識結果 -> 姓名: {st.session_state['ai_name']} | 地址: {ai_full_address}")
+                    except Exception as parse_err:
+                        st.error(f"解析 AI 回傳格式失敗: {parse_err}")
+                else:
+                    st.error("目前 AI 伺服器流量較大（503 忙碌中），請稍候 3 至 5 秒後再點一次按鈕即可！")
         
         name = st.text_input("輸入姓名", value=st.session_state["ai_name"])
         selected_district = st.selectbox("選擇區段", ["請選擇區段"] + list(district_roads.keys()))
