@@ -81,6 +81,7 @@ elif choice == "歷史記錄查詢":
     
     search_type = st.radio("查詢方式", ["依區段與路名篩選", "自由輸入關鍵字"])
     
+    keyword = ""
     if search_type == "依區段與路名篩選":
         search_dist = st.selectbox("選擇要查詢的區段", list(district_roads.keys()))
         search_road = st.selectbox("選擇要查詢的路名", district_roads[search_dist])
@@ -88,53 +89,52 @@ elif choice == "歷史記錄查詢":
     else:
         keyword = st.text_input("輸入要搜尋的姓名或地址關鍵字")
     
-    if st.button("開始查詢"):
-        response = supabase.table("records").select("*").execute()
-        results = response.data
+    # 直接從資料庫抓取資料，不需透過「開始查詢」按鈕阻擋
+    response = supabase.table("records").select("*").execute()
+    results = response.data
+    
+    if keyword:
+        results = [r for r in results if keyword in r.get('name', '') or keyword in r.get('address', '')]
         
-        if keyword:
-            results = [r for r in results if keyword in r.get('name', '') or keyword in r.get('address', '')]
-            
-        if results:
-            # 依地址數字大小進行智慧排序（1 -> 15 -> 105）
-            def address_sort_key(row):
-                addr = row.get('address', '')
-                numbers = re.findall(r'\d+', addr)
-                return [int(n) for n in numbers] if numbers else [0]
+    if results:
+        # 依地址數字大小進行智慧排序（1 -> 15 -> 105）
+        def address_sort_key(row):
+            addr = row.get('address', '')
+            numbers = re.findall(r'\d+', addr)
+            return [int(n) for n in numbers] if numbers else [0]
 
-            results.sort(key=address_sort_key)
+        results.sort(key=address_sort_key)
+        
+        st.warning(f"找到 {len(results)} 筆雲端紀錄（已依地址數字由小到大排序）！")
+        
+        # 使用 enumerate 產生絕對不會重複的編號 i
+        for i, row in enumerate(results):
+            record_id = row.get('id')
+            st.markdown(f"### 👤 姓名: {row['name']}")
+            st.write(f"**地址:** {row['address']} | **狀態:** {row['status']} | **時間:** {row['timestamp']}")
             
-            st.warning(f"找到 {len(results)} 筆雲端紀錄（已依地址數字由小到大排序）！")
+            if row.get('image_url'):
+                st.image(row['image_url'], width=200, caption="雲端存檔照片")
+                with st.expander("🔍 點擊展開看清晰大圖", expanded=False):
+                    st.image(row['image_url'], width=450, caption="完整大圖檢視")
             
-            # 使用 enumerate 產生絕對不會重複的編號 i
-            for i, row in enumerate(results):
-                record_id = row.get('id')
-                st.markdown(f"### 👤 姓名: {row['name']}")
-                st.write(f"**地址:** {row['address']} | **狀態:** {row['status']} | **時間:** {row['timestamp']} | **ID:** {record_id}")
+            # 刪除按鈕
+            if st.button(f"🗑️ 刪除這筆紀錄 ({row['name']} - {row['address']})", key=f"del_{i}_{record_id}"):
+                img_url = row.get('image_url', '')
+                if img_url:
+                    try:
+                        file_name = img_url.split('/')[-1]
+                        supabase.storage.from_("photos").remove([file_name])
+                    except Exception as e:
+                        pass
                 
-                if row.get('image_url'):
-                    st.image(row['image_url'], width=200, caption="雲端存檔照片")
-                    with st.expander("🔍 點擊展開看清晰大圖", expanded=False):
-                        st.image(row['image_url'], width=450, caption="完整大圖檢視")
+                # 強制將 record_id 轉為整數並執行刪除
+                target_id = int(record_id)
+                supabase.table("records").delete().eq("id", target_id).execute()
                 
-                # 結合編號 i 與 record_id，確保 key 絕對唯一，並印出除錯結果讓畫面停住
-                if st.button(f"🗑️ 刪除這筆紀錄 ({row['name']} - {row['address']})", key=f"del_{i}_{record_id}"):
-                    img_url = row.get('image_url', '')
-                    if img_url:
-                        try:
-                            file_name = img_url.split('/')[-1]
-                            supabase.storage.from_("photos").remove([file_name])
-                        except Exception as e:
-                            pass
-                    
-                    # 強制將 record_id 轉為整數 int
-                    target_id = int(record_id)
-                    res = supabase.table("records").delete().eq("id", target_id).execute()
-                    
-                    # 顯示刪除後的回應結果，讓畫面停住供您檢視
-                    st.write("🔍 刪除回應結果：", res)
-                    st.success(f"已成功發送刪除指令！請看上方回應結果確認。")
-                
-                st.markdown("---")
-        else:
-            st.info("查無相關歷史紀錄。")
+                st.success(f"已成功刪除 {row['name']} 的紀錄！")
+                st.rerun()
+            
+            st.markdown("---")
+    else:
+        st.info("查無相關歷史紀錄。")
