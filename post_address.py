@@ -117,7 +117,7 @@ elif choice == "歷史記錄查詢":
                     with st.expander("🔍 點擊展開看清晰大圖", expanded=False):
                         st.image(row['image_url'], width=450, caption="完整大圖檢視")
                 
-                # 結合編號 i 與 record_id，確保 key 絕對唯一
+                # 結合編號 i 與 record_id，確保 key 絕對唯一，並加入 st.rerun() 立即更新畫面
                 if st.button(f"🗑️ 刪除這筆紀錄 ({row['name']} - {row['address']})", key=f"del_{i}_{record_id}"):
                     img_url = row.get('image_url', '')
                     if img_url:
