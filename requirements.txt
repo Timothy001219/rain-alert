@@ -6,3 +6,4 @@ yfinance
 streamlit
 Pillow
 supabase
+google-genai
