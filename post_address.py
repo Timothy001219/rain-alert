@@ -89,7 +89,6 @@ elif choice == "歷史記錄查詢":
     else:
         keyword = st.text_input("輸入要搜尋的姓名或地址關鍵字")
     
-    # 直接從資料庫抓取資料，不需透過「開始查詢」按鈕阻擋
     response = supabase.table("records").select("*").execute()
     results = response.data
     
@@ -107,7 +106,6 @@ elif choice == "歷史記錄查詢":
         
         st.warning(f"找到 {len(results)} 筆雲端紀錄（已依地址數字由小到大排序）！")
         
-        # 使用 enumerate 產生絕對不會重複的編號 i
         for i, row in enumerate(results):
             record_id = row.get('id')
             st.markdown(f"### 👤 姓名: {row['name']}")
@@ -128,11 +126,11 @@ elif choice == "歷史記錄查詢":
                     except Exception as e:
                         pass
                 
-                # 強制將 record_id 轉為整數並執行刪除
                 target_id = int(record_id)
                 supabase.table("records").delete().eq("id", target_id).execute()
                 
-                st.success(f"已成功刪除 {row['name']} 的紀錄！")
+                # 改用右下角彈出式通知，讓提示完美顯示並順暢重新整理
+                st.toast(f"已成功刪除 {row['name']} 的紀錄！", icon="✅")
                 st.rerun()
             
             st.markdown("---")
