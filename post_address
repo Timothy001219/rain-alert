@@ -108,29 +108,27 @@ elif choice == "歷史記錄查詢":
             
             for row in results:
                 record_id = row.get('id')
-                st.write(f"**姓名:** {row['name']} | **地址:** {row['address']} | **狀態:** {row['status']} | **時間:** {row['timestamp']}")
+                st.markdown(f"### 👤 姓名: {row['name']}")
+                st.write(f"**地址:** {row['address']} | **狀態:** {row['status']} | **時間:** {row['timestamp']}")
                 
                 if row.get('image_url'):
                     st.image(row['image_url'], width=200, caption="雲端存檔照片")
                     with st.expander("🔍 點擊展開看清晰大圖"):
                         st.image(row['image_url'], width=450, caption="完整大圖檢視")
                 
-                # 刪除按鈕（使用 unique key 避免按鈕衝突）
-                if st.button("🗑️ 刪除此筆紀錄", key=f"del_{record_id}"):
-                    # 1. 如果有圖片網址，嘗試從網址中解析出檔名並刪除雲端照片
+                # 醒目的刪除按鈕
+                if st.button(f"🗑️ 刪除這筆紀錄 ({row['name']} - {row['address']})", key=f"del_{record_id}"):
                     img_url = row.get('image_url', '')
                     if img_url:
                         try:
-                            # 從公開網址取出最後的檔名 (例如 img_20260905_120000.jpg)
                             file_name = img_url.split('/')[-1]
                             supabase.storage.from_("photos").remove([file_name])
                         except Exception as e:
-                            pass  # 就算照片刪除失敗也繼續刪除文字紀錄
+                            pass
                     
-                    # 2. 從資料庫中刪除該筆資料
                     supabase.table("records").delete().eq("id", record_id).execute()
                     st.success(f"已成功刪除 {row['name']} 的紀錄！")
-                    st.rerun()  # 重新整理頁面以更新列表
+                    st.rerun()
                 
                 st.markdown("---")
         else:
