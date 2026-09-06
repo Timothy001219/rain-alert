@@ -5,12 +5,10 @@ from PIL import Image
 import streamlit as st
 from supabase import create_client, Client
 
-# 設定您的 Supabase 憑證
-# SUPABASE_URL = "https://slcrumadevovwituiizv.supabase.co"
-# SUPABASE_KEY = "sb_publishable_IHEeakv0tSWyHN16onHTKg_fjBzBoEJ"
-# 從 Streamlit 雲端的安全的密鑰設定中讀取
+# 從 Streamlit 雲端的安全設定中讀取 Supabase 憑證
 SUPABASE_URL = st.secrets["SUPABASE_URL"]
 SUPABASE_KEY = st.secrets["SUPABASE_KEY"]
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 st.title("雲端版地址姓名記錄系統")
@@ -28,20 +26,15 @@ district_roads = {
 if choice == "現場拍照登錄":
     st.subheader("手機拍照與雲端建檔")
     
-    # 手機拍照或上傳
     camera_file = st.file_uploader("拍攝或上傳門牌、信件照片", type=["jpg", "png", "jpeg"])
     
     if camera_file is not None:
         image = Image.open(camera_file)
         st.image(image, caption="現場拍攝照片", use_container_width=True)
         
-        # 欄位設計
         name = st.text_input("輸入姓名")
-        
-        # 步驟一：選擇區段
         selected_district = st.selectbox("選擇區段", ["請選擇區段"] + list(district_roads.keys()))
         
-        # 步驟二：根據區段動態顯示對應路名
         if selected_district != "請選擇區段":
             available_roads = district_roads[selected_district]
             selected_road = st.selectbox("選擇路名", ["請選擇路名"] + available_roads)
@@ -50,7 +43,6 @@ if choice == "現場拍照登錄":
             
         lane_num = st.text_input("輸入巷/弄/號 (例如: 123號 3樓)")
         
-        # 組合完整地址
         if selected_district != "請選擇區段" and selected_road != "請選擇路名":
             address = selected_road + lane_num
         else:
@@ -58,23 +50,19 @@ if choice == "現場拍照登錄":
             
         status = st.selectbox("狀態分類", ["無此人", "遷移"])
         
-        # 儲存按鈕
         if st.button("確認並上傳至雲端"):
             if name and selected_district != "請選擇區段" and selected_road != "請選擇路名":
-                # 1. 處理圖片並上傳至 Supabase Storage 的 photos 儲存桶
                 file_name = f"img_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
                 
                 buf = io.BytesIO()
                 image.save(buf, format="JPEG")
                 byte_im = buf.getvalue()
                 
-                # 上傳至雲端
+                # 上傳圖片至 Supabase Storage
                 supabase.storage.from_("photos").upload(file_name, byte_im, {"content-type": "image/jpeg"})
-                
-                # 取得圖片公開網址
                 img_url = supabase.storage.from_("photos").get_public_url(file_name)
                 
-                # 2. 將文字紀錄寫入 Supabase 資料表 records
+                # 寫入 Supabase 資料表 records
                 data = {
                     "name": name,
                     "address": address,
@@ -101,11 +89,9 @@ elif choice == "歷史記錄查詢":
         keyword = st.text_input("輸入要搜尋的姓名或地址關鍵字")
     
     if st.button("開始查詢"):
-        # 從 Supabase 資料庫抓取所有紀錄
         response = supabase.table("records").select("*").execute()
         results = response.data
         
-        # 關鍵字篩選
         if keyword:
             results = [r for r in results if keyword in r.get('name', '') or keyword in r.get('address', '')]
             
@@ -119,13 +105,33 @@ elif choice == "歷史記錄查詢":
             results.sort(key=address_sort_key)
             
             st.warning(f"找到 {len(results)} 筆雲端紀錄（已依地址數字由小到大排序）！")
+            
             for row in results:
+                record_id = row.get('id')
                 st.write(f"**姓名:** {row['name']} | **地址:** {row['address']} | **狀態:** {row['status']} | **時間:** {row['timestamp']}")
+                
                 if row.get('image_url'):
-                    # 顯示雲端圖片與點擊放大功能
                     st.image(row['image_url'], width=200, caption="雲端存檔照片")
                     with st.expander("🔍 點擊展開看清晰大圖"):
                         st.image(row['image_url'], width=450, caption="完整大圖檢視")
+                
+                # 刪除按鈕（使用 unique key 避免按鈕衝突）
+                if st.button("🗑️ 刪除此筆紀錄", key=f"del_{record_id}"):
+                    # 1. 如果有圖片網址，嘗試從網址中解析出檔名並刪除雲端照片
+                    img_url = row.get('image_url', '')
+                    if img_url:
+                        try:
+                            # 從公開網址取出最後的檔名 (例如 img_20260905_120000.jpg)
+                            file_name = img_url.split('/')[-1]
+                            supabase.storage.from_("photos").remove([file_name])
+                        except Exception as e:
+                            pass  # 就算照片刪除失敗也繼續刪除文字紀錄
+                    
+                    # 2. 從資料庫中刪除該筆資料
+                    supabase.table("records").delete().eq("id", record_id).execute()
+                    st.success(f"已成功刪除 {row['name']} 的紀錄！")
+                    st.rerun()  # 重新整理頁面以更新列表
+                
                 st.markdown("---")
         else:
             st.info("查無相關歷史紀錄。")
